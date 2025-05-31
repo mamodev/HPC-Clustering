@@ -519,6 +519,49 @@ typedef struct ct_node {
         return coreset;
     }
 
+
+    void extract_raw_inplace(
+        float* flat_points,
+        float* flat_weights,
+        size_t n, size_t d
+    ) {
+
+        assert(n > 0 && d > 0 && "n and d should be greater than 0");
+        assert(flat_points != nullptr && "Flat points should not be null");
+        assert(flat_weights != nullptr && "Flat weights should not be null");
+
+        std::vector<ct_node*> nodes = {this};
+
+        int idx = 0;
+        while (!nodes.empty()) {
+            ct_node* node = nodes.back();
+            nodes.pop_back();
+
+            if (node->is_leaf()) {
+                const size_t centerIDX = node->centerIDX;
+                const float* center = node->points[centerIDX];
+                const float new_weight = node->indices.size();
+
+                flat_weights[idx] = new_weight;
+                for (size_t j = 0; j < d; ++j) {
+                    flat_points[idx * d + j] = center[j];
+                }
+             
+                if (idx >= n) {
+                    throw std::runtime_error("Coreset size exceeds the number of points");
+                }
+
+                idx++;
+            } else {
+                if (node->lc) nodes.push_back(node->lc);
+                if (node->rc) nodes.push_back(node->rc);
+            }
+        }
+
+
+    }
+
+
 private:
     ct_node(const flat_points& points, const CTIndices& indices, size_t centerIDX, ct_node* parent = nullptr, float* weights = nullptr)
         : points(points), indices(indices), parent(parent), lc(nullptr), rc(nullptr), centerIDX(centerIDX), cost(0.0), weights(weights) {
