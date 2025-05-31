@@ -1,9 +1,10 @@
-#include <mpi.h>
+#include "perf.hpp"
+#include "mpi_wrap.h"
+
 #include "CoresetTree.hpp"
 #include "CoresetStream.hpp"
 #include "Kmeans.hpp"
 #include "parser.hpp"
-#include "perf.hpp"
 #include <set>
 #include <optional>
 #include <chrono>
@@ -27,9 +28,7 @@
 #endif
 
 
-
 constexpr size_t MAX_RANK = 100; // Maximum rank for the rank map
-
 
 class NodeState {
     std::set<int> ranks;
@@ -381,6 +380,9 @@ void remove_indices(const std::span<int>& indices, Vecs&... vecs) {
 
 int main(int argc, char **argv)
 {
+    auto perf = PerfManager();
+    perf.pause(); // Pause perf at the start
+
     MPI_Init(&argc, &argv);
 
     int world_rank, world_size;
@@ -415,23 +417,27 @@ int main(int argc, char **argv)
         std::cout << "Rank map: " << std::endl;
         bool found_one = false;
         for (size_t r = 0; r < rank_map.size(); ++r) {
-            std::cout << "Rank " << r << ": ";
-
             if (rank_map[r].size() == 1) {
                 if (found_one) break;
                 found_one = true;
             }
+
+            std::cout << "Rank " << r << ": ";
             for (const auto& worker : rank_map[r]) {
                 std::cout << worker << " ";
             }
             std::cout << std::endl;
         }
 
-
+        auto start_time = std::chrono::high_resolution_clock::now();
         auto [samples, outPath] = parseArgs<float>(argc, argv);
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+        std::cout << "Parsing took " << duration.count() << " ms" << std::endl;
+
 
         for (size_t r = 1; r < world_size; ++r) {
-            MPI_Send(&samples.features, 1, MPI_UNSIGNED_LONG, r, 0, MPI_COMM_WORLD);
+            mpi_send(&samples.features, 1, MPI_UNSIGNED_LONG, r, 0, MPI_COMM_WORLD);
         }
 
         size_t num_workers = world_size - 1;
@@ -447,9 +453,10 @@ int main(int argc, char **argv)
         std::vector<int> request_indices; // To store indices of completed requests
         std::vector<req_info_t> request_infos;
         
+        perf.resume(); // Resume perf after parsing
         // Start issuing non-blocking receives to workers
         for (int w = 0; w < num_workers; ++w) {
-            MPI_Irecv(nullptr, 0, MPI_FLOAT, w + 1, 0, MPI_COMM_WORLD, &requests.emplace_back());
+            mpi_irecv(nullptr, 0, MPI_FLOAT, w + 1, 0, MPI_COMM_WORLD, &requests.emplace_back());
             request_infos.push_back({false, w + 1});
         }
 
@@ -458,8 +465,8 @@ int main(int argc, char **argv)
         size_t stream_cursor = 0;
         while(requests.size() > 0) { 
             int outcount = 0;
-            MPI_Waitsome(requests.size(), requests.data(), &outcount, request_indices.data(), MPI_STATUS_IGNORE);
-            assert(outcount > 0 && "MPI_Waitsome returned negative outcount or zero, which should not happen here");
+            mpi_waitsome(requests.size(), requests.data(), &outcount, request_indices.data(), MPI_STATUS_IGNORE);
+            assert(outcount > 0 && "mpi_waitsome returned negative outcount or zero, which should not happen here");
 
             for (int r = 0; r < outcount; ++r) {
                 int idx = request_indices[r];
@@ -471,16 +478,16 @@ int main(int argc, char **argv)
 
                     if (stream_cursor + CORESET_SIZE > samples.samples) {
                         // no more data to send!
-                        MPI_Isend(nullptr, 0, MPI_FLOAT, w, 0, MPI_COMM_WORLD, &requests.emplace_back());
+                        mpi_isend(nullptr, 0, MPI_FLOAT, w, 0, MPI_COMM_WORLD, &requests.emplace_back());
                         request_infos.push_back({true, w});
                     } else {
                         const float *chunk = samples.data.data() + (stream_cursor * samples.features);
                         stream_cursor += CORESET_SIZE;
 
-                        MPI_Isend(chunk, CORESET_SIZE * samples.features, MPI_FLOAT, w, 0, MPI_COMM_WORLD, &requests.emplace_back());
+                        mpi_isend(chunk, CORESET_SIZE * samples.features, MPI_FLOAT, w, 0, MPI_COMM_WORLD, &requests.emplace_back());
                         request_infos.push_back({true, w});
     
-                        MPI_Irecv(nullptr, 0, MPI_FLOAT, w, 0, MPI_COMM_WORLD, &requests.emplace_back());
+                        mpi_irecv(nullptr, 0, MPI_FLOAT, w, 0, MPI_COMM_WORLD, &requests.emplace_back());
                         request_infos.push_back({false, w});
                     }
                 }
@@ -489,6 +496,7 @@ int main(int argc, char **argv)
             remove_indices(std::span<int>(request_indices.data(), outcount), requests, request_infos);
             request_indices.resize(requests.size());
         }
+
 
     } else {
         // _cout << "P[" << world_rank << "] started." << std::endl;
@@ -518,17 +526,25 @@ int main(int argc, char **argv)
         float *merge_buffer = new float[CORESET_TOTAL_SIZE * 2]; 
         float *coreset_extract_buffer = new float[CORESET_TOTAL_SIZE]; 
 
+        perf.resume(); // Resume perf after initialization
+
         // start by initiating recvs
+        const int PENDING_MASTER_REQUESTS = 1; // Master requests
+
+        for (int i = 0; i < PENDING_MASTER_REQUESTS; ++i)
         { // Master request
-            MPI_Isend(nullptr, 0, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
+            mpi_isend(nullptr, 0, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
             request_info.emplace_back(request_info_t{true, 0, nullptr}); 
             float *recv_buff = new float[CORESET_POINTS_SIZE];
-            MPI_Irecv(recv_buff, CORESET_POINTS_SIZE, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
+            mpi_irecv(recv_buff, CORESET_POINTS_SIZE, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
             request_info.emplace_back(request_info_t{false, 0, recv_buff});
         }
+
+        const int PENDING_PEER_REQUESTS = 2; 
+        for (int i = 0; i < PENDING_PEER_REQUESTS; ++i)
         { // Peer Requests
             float *recv_buff = new float[CORESET_TOTAL_SIZE]; 
-            MPI_Irecv(recv_buff, CORESET_TOTAL_SIZE, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, worker_comm, &requests.emplace_back());
+            mpi_irecv(recv_buff, CORESET_TOTAL_SIZE, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, worker_comm, &requests.emplace_back());
             request_info.emplace_back(request_info_t{false, -1, recv_buff}); 
             assert(request_info.back().buffer == recv_buff && "Received buffer should match the request info buffer");
         }
@@ -552,10 +568,8 @@ int main(int argc, char **argv)
             // }
             // _cout << std::endl;
 
-            MPI_Waitsome(requests.size(), requests.data(), &outcount, request_indices.data(), request_statuses.data());
-            assert(outcount > 0 && "MPI_Waitsome returned negative or 0 outcount, which should not happen here");
-
-
+            mpi_waitsome(requests.size(), requests.data(), &outcount, request_indices.data(), request_statuses.data());
+            assert(outcount > 0 && "mpi_waitsome returned negative or 0 outcount, which should not happen here");
 
             // PRINT PENDING REQUESTS inline 
             // _cout << "\t\t\t BEF: P[" << world_rank << "] preq: " << requests.size();
@@ -641,7 +655,7 @@ int main(int argc, char **argv)
                                           << " to worker " << flush_to 
                                           << " (flush rank: " << flush_rank << ")" << std::endl;
                                 
-                                MPI_Isend(coreset_buff, coreset_size, MPI_FLOAT, dest, flush_rank, comm, &requests.emplace_back());
+                                mpi_isend(coreset_buff, coreset_size, MPI_FLOAT, dest, flush_rank, comm, &requests.emplace_back());
                                 request_info.emplace_back(request_info_t{true, rank, coreset_buff}); 
                                 coresets[rank] = nullptr; 
                             } 
@@ -649,7 +663,7 @@ int main(int argc, char **argv)
                             _cout << "P[" << world_rank << "] Sending termination signal to worker " << flush_to 
                                       << " (flush rank: " << flush_rank << ")" << std::endl;
 
-                            MPI_Isend(nullptr, 0, MPI_FLOAT, dest, flush_rank, comm, &requests.emplace_back());
+                            mpi_isend(nullptr, 0, MPI_FLOAT, dest, flush_rank, comm, &requests.emplace_back());
                             request_info.emplace_back(request_info_t{true, rank, nullptr}); 
                         }
                         
@@ -663,16 +677,16 @@ int main(int argc, char **argv)
                 //Reissue a new request for the MASTER if not closed rank0
                 if (is_master_msg && !node_state.has_received_master_termination()) {
                     // _cout << "P[" << world_rank << "] reissuing request for MASTER rank 0." << std::endl;
-                    MPI_Isend(nullptr, 0, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
+                    mpi_isend(nullptr, 0, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
                     request_info.emplace_back(request_info_t{true, 0, nullptr}); // Add request info for the master
                     
                     float *recv_buff = new float[CORESET_SIZE * features]; // No weights for rank 0
-                    MPI_Irecv(recv_buff, CORESET_SIZE * features, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
+                    mpi_irecv(recv_buff, CORESET_SIZE * features, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
                     request_info.emplace_back(request_info_t{false, 0, recv_buff}); // Add request info for the master
                 } else if (!is_master_msg && issue_new_peer_request) {
                     // _cout << "P[" << world_rank << "] reissuing request for peer rank " << rank << "." << std::endl;
                     float *recv_buff = new float[CORESET_SIZE * features + CORESET_SIZE]; // Allocate buffer for coreset and weights
-                    MPI_Irecv(recv_buff, CORESET_SIZE * features + CORESET_SIZE, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, worker_comm, &requests.emplace_back());
+                    mpi_irecv(recv_buff, CORESET_SIZE * features + CORESET_SIZE, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, worker_comm, &requests.emplace_back());
                     request_info.emplace_back(request_info_t{false, -1, recv_buff}); // Add request info for the received data
                 }
 
@@ -737,7 +751,7 @@ int main(int argc, char **argv)
                                 
                 if (!node_state.has_first_class_rank_support(rank + 1)) {
                     int next_worker = randomRankWorker(rank + 1, rank_map);
-                    MPI_Isend(running_coreset, CORESET_TOTAL_SIZE, MPI_FLOAT, next_worker - 1, rank + 1, worker_comm, &requests.emplace_back());
+                    mpi_isend(running_coreset, CORESET_TOTAL_SIZE, MPI_FLOAT, next_worker - 1, rank + 1, worker_comm, &requests.emplace_back());
                     request_info.emplace_back(request_info_t{true, rank + 1, running_coreset});
                 }
             }
@@ -795,5 +809,6 @@ int main(int argc, char **argv)
         MPI_Comm_free(&worker_comm); // Free the worker communicator
     }
 
+    perf.pause(); // Pause perf after sending all data
     MPI_Finalize();
 }
