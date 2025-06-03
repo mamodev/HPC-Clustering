@@ -10,10 +10,10 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 find_package(MPI REQUIRED)
 find_package(OpenMP REQUIRED)
-find_library(NUMA_LIB numa)
-if(NOT NUMA_LIB)
-    message(FATAL_ERROR "libnuma not found!")
-endif()
+# find_library(NUMA_LIB numa)
+# if(NOT NUMA_LIB)
+#     message(FATAL_ERROR "libnuma not found!")
+# endif()
 
 # set(MPIP_INSTALL_DIR "/usr/local") 
 # include_directories(${MPIP_INSTALL_DIR}/include)
@@ -27,7 +27,6 @@ endif()
 message(STATUS "Found mpiP: ${mpiP}")
 get_filename_component(MPIP_DIR ${mpiP} DIRECTORY)
 get_filename_component(MPIP_DIR ${MPIP_DIR} DIRECTORY)
-
 message(STATUS "mpiP directory: ${MPIP_DIR}")
 
 include_directories(${MPIP_DIR}/include)
