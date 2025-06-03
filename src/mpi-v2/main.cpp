@@ -10,9 +10,11 @@
 #include <chrono>
 #include <ranges>
 
+// #undef _cout
+// #define _cout std::cout
 
 #if !defined(CORESET_SIZE)
-#define CORESET_SIZE 60000
+#define CORESET_SIZE 6000
 #endif
 
 #if !defined(CLUSTERS)
@@ -315,13 +317,15 @@ std::vector<std::vector<int>> genRankMap(int world_size, int max_rank)
 
     std::vector<std::vector<int>> rank_map(max_rank);
 
-    int next_worker = 0;
+    // int next_worker = 0;
     int num_worker_per_rank = world_size - 1; // Exclude the master node
     int last_split_rank = -1;
     for (int r = 0; r < max_rank; ++r) {
         for (int i = 0; i < num_worker_per_rank; ++i) {
-            rank_map[r].push_back(next_worker + 1); // +1 to skip the master node
-            next_worker = (next_worker + 1) % (world_size - 1); // Wrap around to the next worker, excluding the master node
+            // rank_map[r].push_back(next_worker + 1); // +1 to skip the master node
+            // next_worker = (next_worker + 1) % (world_size - 1); // Wrap around to the next worker, excluding the master node
+            rank_map[r].push_back(i + 1); // +1 to skip the master node
+        
         }
 
         num_worker_per_rank = (num_worker_per_rank) / 2; // Halve the number of workers for the next rank
@@ -352,16 +356,21 @@ int randomRankWorker(int rank, const std::vector<std::vector<int>>& rank_map)
 }
 
 template <typename T>
-void remove_indices_from_vector(const std::span<int>& indices, std::vector<T>& vec) {
+void remove_indices_from_vector(
+    const std::span<const int>& indices, 
+    std::vector<T>& vec
+) {
+    std::vector<bool> to_remove(vec.size(), false);
+    
+    for (int idx : indices) {
+        if (idx >= 0 && static_cast<size_t>(idx) < vec.size()) {
+            to_remove[idx] = true;
+        }
+    }
+    
     size_t write = 0;
-    size_t remove_idx = 0;
-    size_t n = vec.size();
-    size_t k = indices.size();
-
-    for (size_t read = 0; read < n; ++read) {
-        if (remove_idx < k && static_cast<size_t>(indices[remove_idx]) == read) {
-            ++remove_idx; // skip this index
-        } else {
+    for (size_t read = 0; read < vec.size(); ++read) {
+        if (!to_remove[read]) {
             if (write != read) {
                 vec[write] = std::move(vec[read]);
             }
@@ -372,11 +381,9 @@ void remove_indices_from_vector(const std::span<int>& indices, std::vector<T>& v
 }
 
 template <typename... Vecs>
-void remove_indices(const std::span<int>& indices, Vecs&... vecs) {
-    std::sort(indices.begin(), indices.end());
+void remove_indices(const std::span<const int>& indices, Vecs&... vecs) {
     (remove_indices_from_vector(indices, vecs), ...);
 }
-
 
 int main(int argc, char **argv)
 {
@@ -395,7 +402,7 @@ int main(int argc, char **argv)
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
-    _cout << "RANK " << world_rank << " PID: " << getpid() << std::endl;
+    std::cout << "RANK " << world_rank << " PID: " << getpid() << std::endl;
     MPI_Barrier(MPI_COMM_WORLD); // Ensure all ranks are synchronized before proceeding
 
 
@@ -444,61 +451,65 @@ int main(int argc, char **argv)
         size_t next_worker = 0;
 
 
-        struct req_info_t {
-            bool is_send;
-            int worker;
-        };
-
         std::vector<MPI_Request> requests;
-        std::vector<int> request_indices; // To store indices of completed requests
-        std::vector<req_info_t> request_infos;
+        std::vector<MPI_Status> statuses; // Statuses for the requests
+        std::vector<int> request_indices; // Indices of completed requests
         
         perf.resume(); // Resume perf after parsing
-        // Start issuing non-blocking receives to workers
-        for (int w = 0; w < num_workers; ++w) {
-            mpi_irecv(nullptr, 0, MPI_FLOAT, w + 1, 0, MPI_COMM_WORLD, &requests.emplace_back());
-            request_infos.push_back({false, w + 1});
-        }
-
-        request_indices.resize(requests.size());
 
         size_t stream_cursor = 0;
-        while(requests.size() > 0) { 
-            int outcount = 0;
-            mpi_waitsome(requests.size(), requests.data(), &outcount, request_indices.data(), MPI_STATUS_IGNORE);
-            assert(outcount > 0 && "mpi_waitsome returned negative outcount or zero, which should not happen here");
+        size_t stream_size = 10 * samples.samples; 
 
-            for (int r = 0; r < outcount; ++r) {
-                int idx = request_indices[r];
-
-                if (request_infos[idx].is_send) {
-                    //pass
-                } else {
-                    int w = request_infos[idx].worker;
-
-                    if (stream_cursor + CORESET_SIZE > samples.samples) {
-                        // no more data to send!
-                        mpi_isend(nullptr, 0, MPI_FLOAT, w, 0, MPI_COMM_WORLD, &requests.emplace_back());
-                        request_infos.push_back({true, w});
-                    } else {
-                        const float *chunk = samples.data.data() + (stream_cursor * samples.features);
-                        stream_cursor += CORESET_SIZE;
-
-                        mpi_isend(chunk, CORESET_SIZE * samples.features, MPI_FLOAT, w, 0, MPI_COMM_WORLD, &requests.emplace_back());
-                        request_infos.push_back({true, w});
-    
-                        mpi_irecv(nullptr, 0, MPI_FLOAT, w, 0, MPI_COMM_WORLD, &requests.emplace_back());
-                        request_infos.push_back({false, w});
-                    }
-                }
+        auto get_chunk_at = [&](size_t cursor) -> const float* {
+            size_t wrapped_cursor = cursor % samples.samples;
+            if (wrapped_cursor + CORESET_SIZE > samples.samples) {
+                wrapped_cursor = samples.samples - CORESET_SIZE; // Ensure we don't go out of bounds
             }
 
-            remove_indices(std::span<int>(request_indices.data(), outcount), requests, request_infos);
-            request_indices.resize(requests.size());
+            return samples.data.data() + wrapped_cursor * samples.features; // Get the chunk of data at the cursor
+        };
+
+
+        for (int w = 0; w < num_workers; ++w) {
+            const float *chunk = get_chunk_at(stream_cursor);
+            stream_cursor += CORESET_SIZE;
+            mpi_isend(chunk, CORESET_SIZE * samples.features, MPI_FLOAT, w + 1, 0, MPI_COMM_WORLD, &requests.emplace_back());
         }
 
+        statuses.resize(requests.size());
+        request_indices.resize(requests.size());
+
+        std::set<int> eof_idx;
+
+        while (true) {        
+            int outcount = 0;
+            mpi_waitsome(requests.size(), requests.data(), &outcount, request_indices.data(), statuses.data());
+
+            if (outcount == MPI_UNDEFINED) {
+                std::cout << "SENT ALL MESSAGES TO WORKERS" << std::endl;
+                break; // All messages sent, exit the loop
+            }
+
+            assert(outcount > 0 && "mpi_waitsome returned negative outcount or zero, which should not happen here");
+            for (int r = 0; r < outcount; ++r) {
+                int idx = request_indices[r];
+                if (eof_idx.contains(idx)) {
+                    continue;
+                }
+
+                if (stream_cursor + CORESET_SIZE > stream_size) {
+                    eof_idx.insert(idx);
+                    mpi_isend(nullptr, 0, MPI_FLOAT, idx + 1, 0, MPI_COMM_WORLD, &requests[idx]);
+                } else {
+                    const float *chunk = get_chunk_at(stream_cursor);
+                    stream_cursor += CORESET_SIZE;
+                    mpi_isend(chunk, CORESET_SIZE * samples.features, MPI_FLOAT, idx + 1, 0, MPI_COMM_WORLD, &requests[idx]);
+                }
+            }
+        }
 
     } else {
+
         // _cout << "P[" << world_rank << "] started." << std::endl;
         NodeState node_state(rank_map, world_rank);
 
@@ -514,298 +525,282 @@ int main(int argc, char **argv)
 
         struct request_info_t {
             bool is_send_req = false; // True if this is a send request, false if it is a receive request
-            int rank = -1; // Rank associated with the request, -1 for peer requests
-            float *buffer = nullptr; // Pointer to the buffer associated with the request
+            float *buffer = nullptr; 
         };
 
-        std::vector<MPI_Request> requests;
-        std::vector<int> request_indices;
-        std::vector<MPI_Status> request_statuses; // Statuses for the requests
-        std::vector<request_info_t> request_info; // Vector of request info structs
+        std::vector<MPI_Request> master_requests; 
+        std::vector<MPI_Request> peer_requests; 
+
+        std::vector<MPI_Status> master_request_statuses;
+        std::vector<MPI_Status> peer_request_statuses;
+        
+        std::vector<int> peer_requests_indices; 
+        std::vector<int> master_requests_indices;
+
+        std::vector<request_info_t> master_request_info;
+        std::vector<request_info_t> peer_request_info;
+
+        auto issue_master_req = [&]() {
+            float *recv_buff = new float[CORESET_POINTS_SIZE];
+            mpi_irecv(recv_buff, CORESET_POINTS_SIZE, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &master_requests.emplace_back());
+            master_request_info.emplace_back(request_info_t{false, recv_buff});
+        };
+
+        bool issue_new_peer_request = true;
+        bool event_clear_peers_recvs = false; 
+        bool event_clear_master_recvs = false;
+
+        auto issue_peers_req = [&]() {
+            float *recv_buff = new float[CORESET_TOTAL_SIZE];
+            mpi_irecv(recv_buff, CORESET_TOTAL_SIZE, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, worker_comm, &peer_requests.emplace_back());
+            peer_request_info.emplace_back(request_info_t{false, recv_buff});
+        };
+        
+        auto issue_send_peer_req = [&](int peer, int rank, float *coreset_buff, size_t buff_size) {
+            mpi_isend(coreset_buff, buff_size, MPI_FLOAT, peer - 1, rank, worker_comm, &peer_requests.emplace_back());
+            peer_request_info.emplace_back(request_info_t{true, coreset_buff});
+        };  
+
 
         float *merge_buffer = new float[CORESET_TOTAL_SIZE * 2]; 
         float *coreset_extract_buffer = new float[CORESET_TOTAL_SIZE]; 
 
+        auto handle_recv = [&](bool is_master_msg,  request_info_t info, const MPI_Status& status) {
+            int cancelled = 0;
+            MPI_Test_cancelled(&status, &cancelled);
+            if (cancelled || info.is_send_req) {
+
+                // std::cout << "P[" << world_rank << "] Ignoring cancelled send request from worker " 
+                //           << (is_master_msg ? "master" : "peer") 
+                //           << " with rank " << status.MPI_TAG 
+                //           << " (source: " << status.MPI_SOURCE << ")" 
+                //           << std::endl;
+
+                if (info.buffer != nullptr) 
+                    delete[] info.buffer; 
+                return;
+            }
+
+            // std::string type = info.is_send_req ? "send" : "recv";
+            // std::string peer_or_master = info.rank == 0 ? "master" : "peer";
+            // _cout << "P[" << world_rank << "] completed " << type << " request for " << peer_or_master 
+            //           << " with rank " << info.rank << " buffer ptr: " << (void*)info.buffer << std::endl;
+    
+            const int rank = status.MPI_TAG;
+            const int real_source = is_master_msg ? MASTER_RANK : status.MPI_SOURCE + 1; 
+
+            int count;
+            MPI_Get_count(&status, MPI_FLOAT, &count);
+            // _cout << "P[" << world_rank << "] received data from worker " << real_source 
+            //           << " for rank " << rank << " with count " << count 
+            //           << (is_master_msg ? " (master message)" : " (peer message)") 
+            //           << std::endl;
+
+            if (count == 0) {
+                // _cout << "P[" << world_rank << "] received termination signal from worker " << real_source << " for rank " << rank
+                // << (node_state.lower_priority_sibling_terminated(rank) ? " (lower priority siblings terminated)" : " (NOT lower priority siblings terminated)")
+                // // << (node_state.is_lowest_priority_sibling(rank) ? " (this is the lowest priority sibling)" : " (this is NOT the lowest priority sibling)")
+                // << (node_state.input_master_terminated(rank) ? " (input master terminated)" : " (input master NOT terminated)")
+                // << std::endl;
+                if (real_source == MASTER_RANK) {
+                    // std::cout << "P[" << world_rank << "] SET EVNT: event_clear_master_recvs = true" << std::endl;
+                    event_clear_master_recvs = true;
+                }
+
+
+                node_state.add_termination(rank, real_source); // Add termination for this rank
+
+                _cout << "P[" << world_rank << "] added termination for worker " << real_source 
+                          << " in rank " << rank << std::endl;
+
+                if (node_state.in_comunication_closed(rank)) 
+                {
+        
+                    const auto [flush_to, flush_rank] = node_state.where_to_flush(real_source, rank);
+                    
+                    if (flush_to == NodeState::END_OF_PROGRAM) {
+                        _cout << "THIS SHOULD NOT HAPPEN: P[" << world_rank << "] flushing to END_OF_PROGRAM for rank " << rank << std::endl;
+                        MPI_Abort(MPI_COMM_WORLD, EXIT_SUCCESS);
+                    } else if (flush_to == node_state.node_id) {
+                        assert(node_state.has_no_outputs(rank + 1) && "Node should not have outputs when flushing to itself");
+                        _cout << "PROGRAM ENDED: TODO COMPUTE FINAL CORESET" << std::endl;
+                    } else {
+                        float *coreset_buff = coresets[rank];
+                        const size_t coreset_size = rank == 0 ? CORESET_POINTS_SIZE : CORESET_TOTAL_SIZE;
+                        // const MPI_Comm comm = flush_to == 0 ? MPI_COMM_WORLD : worker_comm;
+                        // const int dest = flush_to == 0 ? MASTER_RANK : flush_to - 1; 
+
+
+                        if (coreset_buff) {
+                            _cout << "P[" << world_rank << "] flushing coreset for rank " << rank 
+                                      << " to worker " << flush_to 
+                                      << " (flush rank: " << flush_rank << ")" << std::endl;
+
+                            issue_send_peer_req(flush_to, flush_rank, coreset_buff, coreset_size);
+                            coresets[rank] = nullptr; 
+                        } 
+
+                        _cout << "P[" << world_rank << "] Sending termination signal to worker " << flush_to 
+                                  << " (flush rank: " << flush_rank << ")" << std::endl;
+                        issue_send_peer_req(flush_to, flush_rank, nullptr, 0);
+                    }
+                    
+                    if (node_state.all_in_comunication_closed()) {
+                        // std::cout << "P[" << world_rank << "] SET EVNT: event_clear_peers_recvs = true" << std::endl;
+                        event_clear_peers_recvs = true; 
+                    }
+                }
+            }
+
+            //Reissue a new request for the MASTER if not closed rank0
+            if (is_master_msg && !node_state.has_received_master_termination()) {
+                issue_master_req();
+            } else if (!is_master_msg && !node_state.all_in_comunication_closed()) {
+                issue_peers_req();
+            }
+
+            if (count == 0)
+                return; 
+
+            // if rank 0 count must be CORESET_SIZE * features else CORESET_SIZE * features + CORESET_SIZE
+            assert((rank == 0 && count == CORESET_SIZE * features) || (rank != 0 && count == CORESET_SIZE * features + CORESET_SIZE) && "Received data size should match expected size");
+
+            // check if we received a rank outside of the node ranks
+            if(!node_state.has_first_class_rank_support(rank)) {
+                std::cerr << "TODO implement handling of ranks outside of the node ranks. (Flushed from master rank node)" << std::endl;
+                delete[] info.buffer;
+                return; 
+            }
+
+            if (coresets[rank] == nullptr) {
+                coresets[rank] = info.buffer;
+                return; 
+            }
+
+            _cout << "P[" << world_rank << "] merging coreset for rank " << rank << std::endl; 
+            
+            int curr_rank = rank;
+
+            float *running_coreset = info.buffer;
+            do {
+                const bool with_weights = curr_rank != 0;
+
+                init_merge_buffer(merge_buffer, 
+                    coresets[curr_rank],
+                    running_coreset, 
+                    curr_rank != 0,
+                    curr_rank != 0,
+                    CORESET_SIZE, features);
+
+                auto ctree = CoresetTree(merge_buffer, 
+                    with_weights ? merge_buffer + CORESET_POINTS_SIZE * 2 : nullptr,
+                    CORESET_SIZE * 2, features, CORESET_SIZE);
+                
+                ctree.extract_raw_inplace(
+                    coreset_extract_buffer, 
+                    coreset_extract_buffer + CORESET_POINTS_SIZE, 
+                    CORESET_SIZE, features
+                );
+
+                delete[] coresets[curr_rank]; 
+                coresets[curr_rank] = nullptr;
+
+                curr_rank++;
+                running_coreset = coreset_extract_buffer; // Update the running coreset to the extracted one
+            } while (
+                node_state.has_first_class_rank_support(curr_rank) &&
+                coresets[curr_rank]
+            );
+
+            assert(running_coreset != info.buffer && "Running coreset should not be the same as the received buffer");
+
+            coreset_extract_buffer = new float[CORESET_TOTAL_SIZE];
+            delete[] info.buffer; // Free the received buffer
+                            
+            if (!node_state.has_first_class_rank_support(rank + 1)) {
+                int next_worker = randomRankWorker(rank + 1, rank_map);
+                issue_send_peer_req(next_worker, rank + 1, running_coreset, CORESET_TOTAL_SIZE);
+            }
+        };
+
         perf.resume(); // Resume perf after initialization
 
         // start by initiating recvs
+        // Master request
         const int PENDING_MASTER_REQUESTS = 1; // Master requests
+        for (int i = 0; i < PENDING_MASTER_REQUESTS; ++i) 
+            issue_master_req();
 
-        for (int i = 0; i < PENDING_MASTER_REQUESTS; ++i)
-        { // Master request
-            mpi_isend(nullptr, 0, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
-            request_info.emplace_back(request_info_t{true, 0, nullptr}); 
-            float *recv_buff = new float[CORESET_POINTS_SIZE];
-            mpi_irecv(recv_buff, CORESET_POINTS_SIZE, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
-            request_info.emplace_back(request_info_t{false, 0, recv_buff});
-        }
-
-        const int PENDING_PEER_REQUESTS = 2; 
+        // Peer Requests
+        const int PENDING_PEER_REQUESTS = 1; 
         for (int i = 0; i < PENDING_PEER_REQUESTS; ++i)
-        { // Peer Requests
-            float *recv_buff = new float[CORESET_TOTAL_SIZE]; 
-            mpi_irecv(recv_buff, CORESET_TOTAL_SIZE, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, worker_comm, &requests.emplace_back());
-            request_info.emplace_back(request_info_t{false, -1, recv_buff}); 
-            assert(request_info.back().buffer == recv_buff && "Received buffer should match the request info buffer");
-        }
+            issue_peers_req();
 
-        request_indices.resize(requests.size());
-        request_statuses.resize(requests.size()); // Resize to match the number of requests
-        
-        bool issue_new_peer_request = true;
-        while (!requests.empty())  
+        // set random seed for the worker
+        srand(time(nullptr) + world_rank); // Seed the random number generator with the current time and rank
+        while (!master_requests.empty() || !peer_requests.empty())
         {   
-            assert(requests.size() == request_info.size() && "Requests and request_info should have the same size");
-            assert(requests.size() == request_indices.size() && "Requests and request_indices should have the same size");
-            assert(requests.size() == request_statuses.size() && "Requests and request_statuses should have the same size");
+            master_requests_indices.resize(master_requests.size());
+            peer_requests_indices.resize(peer_requests.size());
+            master_request_statuses.resize(master_requests.size());
+            peer_request_statuses.resize(peer_requests.size());
+
+
+            assert(
+                static_cast<int>(peer_requests.empty()) <= static_cast<int>(master_requests.empty()) 
+            );
 
             int outcount = 0;
-            // _cout << "P[" << world_rank << "] waiting for requests to complete: " << requests.size();
-            // for (size_t i = 0; i < requests.size(); ++i) {
-            //     std::string type = request_info[i].is_send_req ? "send" : "recv";
-            //     std::string peer_or_master = request_info[i].rank == 0 ? "master" : "peer";
-            //     _cout << ", " << type << " " << peer_or_master;
-            // }
-            // _cout << std::endl;
-
-            mpi_waitsome(requests.size(), requests.data(), &outcount, request_indices.data(), request_statuses.data());
-            assert(outcount > 0 && "mpi_waitsome returned negative or 0 outcount, which should not happen here");
-
-            // PRINT PENDING REQUESTS inline 
-            // _cout << "\t\t\t BEF: P[" << world_rank << "] preq: " << requests.size();
-            // for (size_t i = 0; i < requests.size(); ++i) {
-            //     std::string type = request_info[i].is_send_req ? "send" : "recv";
-            //     std::string peer_or_master = request_info[i].rank == 0 ? "master" : "peer";
-            //     _cout << ", " << type << " " << peer_or_master;
-            // }
-            // _cout << std::endl;
-
-            for (int i = 0; i < outcount; ++i) { // Foreach completed request
-                int index = request_indices[i];
-                
-                request_info_t info = request_info[index];
-
-                int cancelled = 0;
-                MPI_Test_cancelled(&request_statuses[i], &cancelled);
-
-                if (cancelled) {
-                    if (info.buffer != nullptr) 
-                        delete[] info.buffer; 
-                    
-                    continue;
-                }
-
-                // std::string type = info.is_send_req ? "send" : "recv";
-                // std::string peer_or_master = info.rank == 0 ? "master" : "peer";
-                // _cout << "P[" << world_rank << "] completed " << type << " request for " << peer_or_master 
-                //           << " with rank " << info.rank << " buffer ptr: " << (void*)info.buffer << std::endl;
-
-                if (info.is_send_req) { //This is just an ack just free memory and continue
-                    if (info.buffer != nullptr) {
-                        delete[] info.buffer; 
-                    } 
-
-                    continue; 
-                }
-
-
-                const MPI_Status status = request_statuses[i];
-                const int rank = status.MPI_TAG;
-                const bool is_master_msg = (info.rank == 0);
-                const int real_source = is_master_msg ? MASTER_RANK : status.MPI_SOURCE + 1; 
-
-                int count;
-                MPI_Get_count(&status, MPI_FLOAT, &count);
-
-          
-                // _cout << "P[" << world_rank << "] received data from worker " << real_source 
-                //           << " for rank " << rank << " with count " << count 
-                //           << (is_master_msg ? " (master message)" : " (peer message)") 
-                //           << std::endl;
-
-                if (count == 0) {
-                    // _cout << "P[" << world_rank << "] received termination signal from worker " << real_source << " for rank " << rank
-                    // << (node_state.lower_priority_sibling_terminated(rank) ? " (lower priority siblings terminated)" : " (NOT lower priority siblings terminated)")
-                    // // << (node_state.is_lowest_priority_sibling(rank) ? " (this is the lowest priority sibling)" : " (this is NOT the lowest priority sibling)")
-                    // << (node_state.input_master_terminated(rank) ? " (input master terminated)" : " (input master NOT terminated)")
-                    // << std::endl;
-                    node_state.add_termination(rank, real_source); // Add termination for this rank
-
-                    _cout << "P[" << world_rank << "] added termination for worker " << real_source 
-                              << " in rank " << rank << std::endl;
-
-                    if (node_state.in_comunication_closed(rank)) 
-                    {
-                        const auto [flush_to, flush_rank] = node_state.where_to_flush(real_source, rank);
-                        
-                        if (flush_to == NodeState::END_OF_PROGRAM) {
-                            _cout << "THIS SHOULD NOT HAPPEN: P[" << world_rank << "] flushing to END_OF_PROGRAM for rank " << rank << std::endl;
-                            MPI_Abort(MPI_COMM_WORLD, EXIT_SUCCESS);
-                        } else if (flush_to == node_state.node_id) {
-                            assert(node_state.has_no_outputs(rank + 1) && "Node should not have outputs when flushing to itself");
-                            _cout << "PROGRAM ENDED: TODO COMPUTE FINAL CORESET" << std::endl;
-                        } else {
-                            float *coreset_buff = coresets[rank];
-                            const size_t coreset_size = rank == 0 ? CORESET_POINTS_SIZE : CORESET_TOTAL_SIZE;
-                            const MPI_Comm comm = flush_to == 0 ? MPI_COMM_WORLD : worker_comm;
-                            const int dest = flush_to == 0 ? MASTER_RANK : flush_to - 1; 
-
-                            if (coreset_buff) {
-                                _cout << "P[" << world_rank << "] flushing coreset for rank " << rank 
-                                          << " to worker " << flush_to 
-                                          << " (flush rank: " << flush_rank << ")" << std::endl;
-                                
-                                mpi_isend(coreset_buff, coreset_size, MPI_FLOAT, dest, flush_rank, comm, &requests.emplace_back());
-                                request_info.emplace_back(request_info_t{true, rank, coreset_buff}); 
-                                coresets[rank] = nullptr; 
-                            } 
-
-                            _cout << "P[" << world_rank << "] Sending termination signal to worker " << flush_to 
-                                      << " (flush rank: " << flush_rank << ")" << std::endl;
-
-                            mpi_isend(nullptr, 0, MPI_FLOAT, dest, flush_rank, comm, &requests.emplace_back());
-                            request_info.emplace_back(request_info_t{true, rank, nullptr}); 
-                        }
-                        
-                        if (node_state.all_in_comunication_closed()) {
-                            _cout << "P[" << world_rank << "] all inputs closed, stop recv req." << std::endl;
-                            issue_new_peer_request = false; 
-                        }
+            if (!peer_requests.empty()) {
+                MPI_Testsome(peer_requests.size(), peer_requests.data(), &outcount, peer_requests_indices.data(), peer_request_statuses.data());
+                assert(outcount != MPI_UNDEFINED && "MPI_Testsome returned MPI_UNDEFINED, which should not happen here");
+                if (outcount > 0) {
+                    for (int i = 0; i < outcount; ++i) { // Foreach completed request
+                        int idx = peer_requests_indices[i];
+                        handle_recv(false, peer_request_info[idx], peer_request_statuses[i]);
                     }
-                }
-
-                //Reissue a new request for the MASTER if not closed rank0
-                if (is_master_msg && !node_state.has_received_master_termination()) {
-                    // _cout << "P[" << world_rank << "] reissuing request for MASTER rank 0." << std::endl;
-                    mpi_isend(nullptr, 0, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
-                    request_info.emplace_back(request_info_t{true, 0, nullptr}); // Add request info for the master
-                    
-                    float *recv_buff = new float[CORESET_SIZE * features]; // No weights for rank 0
-                    mpi_irecv(recv_buff, CORESET_SIZE * features, MPI_FLOAT, MASTER_RANK, 0, MPI_COMM_WORLD, &requests.emplace_back());
-                    request_info.emplace_back(request_info_t{false, 0, recv_buff}); // Add request info for the master
-                } else if (!is_master_msg && issue_new_peer_request) {
-                    // _cout << "P[" << world_rank << "] reissuing request for peer rank " << rank << "." << std::endl;
-                    float *recv_buff = new float[CORESET_SIZE * features + CORESET_SIZE]; // Allocate buffer for coreset and weights
-                    mpi_irecv(recv_buff, CORESET_SIZE * features + CORESET_SIZE, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, worker_comm, &requests.emplace_back());
-                    request_info.emplace_back(request_info_t{false, -1, recv_buff}); // Add request info for the received data
-                }
-
-                if (count == 0) {
-                    continue; 
-                }
-
-                // if rank 0 count must be CORESET_SIZE * features else CORESET_SIZE * features + CORESET_SIZE
-                assert((rank == 0 && count == CORESET_SIZE * features) || (rank != 0 && count == CORESET_SIZE * features + CORESET_SIZE) && "Received data size should match expected size");
-
-                // check if we received a rank outside of the node ranks
-                if(!node_state.has_first_class_rank_support(rank)) {
-                    std::cerr << "TODO implement handling of ranks outside of the node ranks. (Flushed from master rank node)" << std::endl;
-                    delete[] info.buffer;
-                    continue; 
-                }
-
-                if (coresets[rank] == nullptr) {
-                    coresets[rank] = info.buffer;
-                    continue; 
-                }
-
-                _cout << "P[" << world_rank << "] merging coreset for rank " << rank << std::endl; 
-                
-                int curr_rank = rank;
-
-                float *running_coreset = info.buffer;
-                do {
-                    const bool with_weights = curr_rank != 0;
-
-                    init_merge_buffer(merge_buffer, 
-                        coresets[curr_rank],
-                        running_coreset, 
-                        curr_rank != 0,
-                        curr_rank != 0,
-                        CORESET_SIZE, features);
-
-                    auto ctree = CoresetTree(merge_buffer, 
-                        with_weights ? merge_buffer + CORESET_POINTS_SIZE * 2 : nullptr,
-                        CORESET_SIZE * 2, features, CORESET_SIZE);
-                    
-                    ctree.extract_raw_inplace(
-                        coreset_extract_buffer, 
-                        coreset_extract_buffer + CORESET_POINTS_SIZE, 
-                        CORESET_SIZE, features
-                    );
-
-                    delete[] coresets[curr_rank]; 
-                    coresets[curr_rank] = nullptr;
-
-                    curr_rank++;
-                    running_coreset = coreset_extract_buffer; // Update the running coreset to the extracted one
-                } while (
-                    node_state.has_first_class_rank_support(curr_rank) &&
-                    coresets[curr_rank]
-                );
-
-                assert(running_coreset != info.buffer && "Running coreset should not be the same as the received buffer");
-
-                coreset_extract_buffer = new float[CORESET_TOTAL_SIZE];
-                delete[] info.buffer; // Free the received buffer
-                                
-                if (!node_state.has_first_class_rank_support(rank + 1)) {
-                    int next_worker = randomRankWorker(rank + 1, rank_map);
-                    mpi_isend(running_coreset, CORESET_TOTAL_SIZE, MPI_FLOAT, next_worker - 1, rank + 1, worker_comm, &requests.emplace_back());
-                    request_info.emplace_back(request_info_t{true, rank + 1, running_coreset});
+    
+                    remove_indices(std::span<int>(peer_requests_indices.data(), outcount), peer_requests, peer_request_info);
                 }
             }
 
-            // _cout << "P[" << world_rank << "] request hanlded: " << outcount << " requests completed." ; 
-            // std::span<int> completed_indices(request_indices.data(), outcount);
-            // for (int i = 0; i < outcount; ++i) {
-            //     int idx = completed_indices[i];
-            //     _cout << " " << (request_info[idx].is_send_req ? "send" : "recv") 
-            //               << " from " << (request_info[idx].rank == 0 ? "master" : "peer") 
-            //               << " rank: " << request_info[idx].rank;
-            // }
-            // _cout << std::endl;
-
-            size_t prev_size = requests.size(); 
-
-            remove_indices(std::span<int>(request_indices.data(), outcount), requests, request_info);
-            request_indices.resize(requests.size());    
-            request_statuses.resize(requests.size());
-
-            assert(requests.size() <= prev_size && "Requests size should not increase after removing completed requests");
-            assert(request_info.size() == requests.size() && "Request info size should match requests size");
-            assert(request_indices.size() == requests.size() && "Request indices size should match requests size");
-            assert(request_statuses.size() == requests.size() && "Request statuses size should match requests size");
-
-            if (!issue_new_peer_request) {
-                // clear all peer requests if presents
-
-                for (size_t i = 0; i < requests.size(); ++i) {
-                    if (!request_info[i].is_send_req && request_info[i].rank == -1) {
-                        // This is a peer request, we can remove it
-                        MPI_Cancel(&requests[i]); // Cancel the request
+            if (!master_requests.empty()) {
+                MPI_Testsome(master_requests.size(), master_requests.data(), &outcount, master_requests_indices.data(), master_request_statuses.data());
+                assert(outcount != MPI_UNDEFINED && "MPI_Testsome returned MPI_UNDEFINED, which should not happen here");
+                if (outcount > 0) {
+                    for (int i = 0; i < outcount; ++i) { // Foreach completed request
+                        int idx = master_requests_indices[i];
+                        handle_recv(true, master_request_info[idx], master_request_statuses[i]);
                     }
-                }
 
+                    remove_indices(std::span<int>(master_requests_indices.data(), outcount), master_requests, master_request_info);
+                }
             }
 
-            // usleep(100000); // Sleep for a short time to avoid busy waiting, can be adjusted based on performance needs
-            // // PRINT PENDING REQUESTS inline 
-            // _cout << "\t\t\tP[" << world_rank << "] preq: " << requests.size();
-            // for (size_t i = 0; i < requests.size(); ++i) {
-            //     std::string type = request_info[i].is_send_req ?d"send"d: "recv";
-            //     std::string peer_or_master = request_info[i].rank == 0 ? "master" : "peer";
-            //     _cout << ", " << type << " " << peer_or_master;
-            // }
-            // _cout << std::endl;
+            if (event_clear_peers_recvs) {
+                std::cout << "P[" << world_rank << "] clearing peer recvs." << std::endl;
+                for (size_t i = 0; i < peer_requests.size(); ++i) 
+                    if (!peer_request_info[i].is_send_req) 
+                        MPI_Cancel(&peer_requests[i]); 
 
+                event_clear_peers_recvs = false; 
+            }
+
+            if (event_clear_master_recvs) {
+                std::cout << "P[" << world_rank << "] clearing master recvs. to clear: " << master_requests.size() << std::endl;
+
+                for (size_t i = 0; i < master_requests.size(); ++i) 
+                    MPI_Cancel(&master_requests[i]); 
+
+                event_clear_master_recvs = false; 
+            }
         }
     
         // _cout << "P[" << world_rank << "] delete[] merge_buffer: " << (void*)merge_buffer << std::endl;
         delete[] merge_buffer;
         delete[] coreset_extract_buffer; // Free the coreset extract buffer
 
-        _cout << "P[" << world_rank << "] finished receiving data." << std::endl;
+        std::cout << "P[" << world_rank << "] finished receiving data." << std::endl;
         MPI_Comm_free(&worker_comm); // Free the worker communicator
     }
 
