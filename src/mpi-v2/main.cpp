@@ -55,7 +55,9 @@ public:
         siblings.resize(rank_map.size());
         terminations.resize(rank_map.size());
         
-        for (auto [r, workers] : rank_map | std::views::enumerate) {
+        // for (auto [r, workers] : rank_map | std::views::enumerate) {
+        for (size_t r = 0; r < rank_map.size(); ++r) {
+            const auto& workers = rank_map[r];
             rank_masters.push_back(workers.front()); // The first worker in the rank is the master
             rank_lowest_priority_nodes.push_back(workers.back()); // The last worker in the rank is the lowest priority node
         
@@ -67,7 +69,8 @@ public:
 
         assert(!ranks.empty() && "Node must have at least one rank associated with it");
 
-        for (auto [r, workers] : rank_map | std::views::enumerate) {
+        // for (auto [r, workers] : rank_map | std::views::enumerate) {
+        for (int r : ranks) {
             bool found_current = false;
             bool has_next_rank_as_input = ranks.contains(r + 1);
             bool has_this_rank_as_input = ranks.contains(r);
