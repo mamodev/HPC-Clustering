@@ -70,7 +70,8 @@ public:
         assert(!ranks.empty() && "Node must have at least one rank associated with it");
 
         // for (auto [r, workers] : rank_map | std::views::enumerate) {
-        for (int r : ranks) {
+        for (size_t r = 0; r < rank_map.size(); ++r) {
+            const auto& workers = rank_map[r];
             bool found_current = false;
             bool has_next_rank_as_input = ranks.contains(r + 1);
             bool has_this_rank_as_input = ranks.contains(r);
