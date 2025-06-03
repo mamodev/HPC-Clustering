@@ -1,3 +1,4 @@
+#include <optional>
 #include <mpi.h>
 #include "CoresetTree.hpp"
 #include "CoresetStream.hpp"
