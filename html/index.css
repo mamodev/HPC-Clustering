@@ -1,0 +1,61 @@
+
+html {
+  background-color: black;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: row;
+  box-sizing: border-box;;
+}
+
+.node {
+    font-family: monospace;
+    line-height: 1em;
+    font-size: 1.5em;
+    font-weight: bold;
+    border: 4px solid;
+    border-color: rgba(255, 255, 255, 0.5);
+    background-color: grey;
+    min-width: 100px;
+    text-align: center;
+    /* // node.style.backgroundColor = `hsl(${(index * 360) / (communicators + 2)}, 100%, 70%)`; */
+}
+
+
+.message-dot {
+  position: absolute;
+  width: var(--msg-size, 50px);
+  height: var(--msg-size, 50px);
+  border-radius: 50%;
+  background-color: blue; /* Default color */
+  opacity: 1; /* Start visible */
+  transform: translate(0, 0); /* Start at its initial position */
+  z-index: 1000; /* Ensure messages are on top */
+  will-change: transform, opacity; /* Optimize for animation */
+}
+
+/* Keyframe animation for the message travel */
+@keyframes messageTravel {
+  0% {
+    opacity: 1;
+    transform: translate(var(--start-x), var(--start-y));
+    background-color: white; /* Or any initial color */
+  }
+
+  100% {
+    opacity: 1; /* Fade out at the end */
+    transform: translate(var(--end-x), var(--end-y));
+    background-color: black;
+  }
+}

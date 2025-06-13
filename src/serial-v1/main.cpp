@@ -4,9 +4,6 @@
 #include "parser.hpp"
 #include "perf.hpp"
 
-#if !defined(CORESET_SIZE)
-#define CORESET_SIZE 60000
-#endif
 
 #if !defined(CLUSTERS)
 #define CLUSTERS 3
@@ -25,25 +22,26 @@ int main(int argc, char **argv) {
     auto deltas = DeltaTimer();
     perf.pause();
 
-    auto [samples, outPath] = parseArgs<float>(argc, argv);
-    std::vector<int> labels(samples.samples, -1);
-
-    CoresetStream coreset_stream(CORESET_SIZE, samples.features);
-
+    auto [samples, outPath, coresetSize] = parseArgs<float>(argc, argv);
+    // std::vector<int> labels(samples.samples, -1);
+    // CoresetStream coreset_stream(CORESET_SIZE, samples.features);
 
     perf.resume();
 
-    auto stop_insert = deltas.start("insert");
+    auto root = CoresetTree(samples.data.data(),  nullptr, samples.samples, samples.features, coresetSize);
+
+        
+    // auto stop_insert = deltas.start("insert");
     
-    for (size_t i = 0; i < samples.samples; ++i) {
-        coreset_stream.insert(samples.data.data() + i * samples.features);
-    }
+    // for (size_t i = 0; i < samples.samples; ++i) {
+    //     coreset_stream.insert(samples.data.data() + i * samples.features);
+    // }
 
-    stop_insert();
+    // stop_insert();
 
-    auto stop_final = deltas.start("final-coreset");
-    Coreset coreset = coreset_stream.final_coreset();
-    stop_final();
+    // auto stop_final = deltas.start("final-coreset");
+    // Coreset coreset = coreset_stream.final_coreset();
+    // stop_final();
 
     // auto stop_kmeans = deltas.start("kmeans");
     // auto centroids = kmeans(coreset, CLUSTERS, BATCH_ROUNDS, BATCH_SIZE);
@@ -90,5 +88,5 @@ int main(int argc, char **argv) {
     //     std::cerr << "Unable to open file: " << filename << std::endl;
     // }
 
-    std::cout << "Coreset: n = " << coreset.points.n << ", d = " << coreset.points.d << "\n";
+    // std::cout << "Coreset: n = " << coreset.points.n << ", d = " << coreset.points.d << "\n";
 }

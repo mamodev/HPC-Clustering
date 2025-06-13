@@ -3,12 +3,27 @@
 #include <cstddef>
 #include <cmath>
 #include <stdexcept>
-#include <cassert>
 #include <variant>
 #include <vector>
 #include <iostream>
 #include <cstring>
+#include <source_location>
+#include <stacktrace>
 
+void assert(bool condition, std::string message = "Assertion failed",
+            const std::source_location& location = std::source_location::current()) {
+    if (!condition) {
+        std::cerr << "[Assertion failed] " << message 
+                  << " at " << location.file_name() 
+                  << ":" << location.line() 
+                  << " in function " << location.function_name() << std::endl;
+        
+        std::cout << std::stacktrace::current() << '\n';
+
+        
+        throw std::runtime_error(message);
+        }
+}
 
 // cretate a fale _cout 
 class fake_ostream {
@@ -31,7 +46,6 @@ public:
 #endif
 
 
-
 inline float __rand_float() {
     return rand() / (RAND_MAX + 1.0);
 }
@@ -42,32 +56,57 @@ inline size_t __pick_random(size_t n) {
 
 struct flat_points {
     float* points;
-    size_t n, d;
+    const size_t n; // number of points
+    const size_t d; // dimension of points
 
     flat_points() : points(nullptr), n(0), d(0) {}
 
     flat_points(float* points, size_t n, size_t d) : points(points), n(n), d(d) {}
 
     float& operator()(size_t i, size_t j) {
+        assert(points != nullptr, "Points should not be null");
+        assert(i < n, "Index i out of bounds");
+        assert(j < d, "Index j out of bounds");
+        assert(d > 0, "Dimension d should be greater than 0");
+        assert(points + i * d < points + n * d,  "1) Accessing out of bounds in flat_points");
+        assert(points + i * d + d <= points + n * d,  "2) Accessing out of bounds in flat_points");
         return points[i * d + j];
     }
 
     const float& operator()(size_t i, size_t j) const {
+        assert(points != nullptr,  "Points should not be null");
+        assert(i < n,  "Index i out of bounds");
+        assert(j < d,  "Index j out of bounds");
+        assert(d > 0,  "Dimension d should be greater than 0");
+        assert(points + i * d < points + n * d,  "1) Accessing out of bounds in flat_points");
+        assert(points + i * d + d <= points + n * d,  "2) Accessing out of bounds in flat_points");
         return points[i * d + j];
     }
 
     float* operator[](size_t i) {
+        assert(points != nullptr,  "Points should not be null");
+        assert(i < n,  "Index out of bounds: " + std::to_string(i) + " >= " + std::to_string(n));
+        assert(d > 0,  "Dimension d should be greater than 0");
+        assert(points + i * d < points + n * d,  "1) Accessing out of bounds in flat_points");
+        assert(points + i * d + d <= points + n * d,  "2) Accessing out of bounds in flat_points");
         return points + i * d;
     }
 
     const float* operator[](size_t i) const {
+        assert(points != nullptr,  "Points should not be null");
+        assert(i < n,  "Index out of bounds: " + std::to_string(i) + " >= " + std::to_string(n));
+        assert(d > 0,  "Dimension d should be greater than 0");
+        assert(points + i * d < points + n * d,  "Accessing out of bounds in flat_points");
+        assert(points + i * d + d <= points + n * d,  "Accessing out of bounds in flat_points");
         return points + i * d;
     }
 };
 
 typedef struct indices {
+    size_t flipped = 0;
     size_t* indices_vec;
     size_t* indices_vec_tmp;
+    size_t original_n; 
     size_t n;
     size_t start;
 
@@ -76,27 +115,16 @@ typedef struct indices {
         size_t* indices_vec_tmp = new size_t[n];
         for (size_t i = 0; i < n; ++i) {
             indices_vec[i] = i;
+            indices_vec_tmp[i] = std::numeric_limits<size_t>::max();
         }
 
-        return indices(n, indices_vec, indices_vec_tmp);
+        return indices(n, indices_vec, indices_vec_tmp, 0, 0, n);
     }
 
     std::pair<indices, indices> split(
         const size_t c1IDX,
         const size_t c2IDX,
         const struct flat_points points) {
-            
-     
-
-        
-        size_t cur0 = start;
-        size_t cur1 = start + n - 1;
-        
-        assert(cur0 <= cur1 && "This should never happen");
-        _cout << "ForesetTree: split: cur0 = " << cur0 << ", cur1 = " << cur1 << " delta = " << cur1 - cur0 << "\n";
-
-        // const float* c1 = points[c1IDX];
-        // const float* c2 = points[c2IDX];
 
         float* c1 = (float *) alloca(points.d * sizeof(float));
         float* c2 = (float *) alloca(points.d * sizeof(float));
@@ -105,12 +133,21 @@ typedef struct indices {
             c2[j] = points[c2IDX][j];
         }
 
-        int i = start;
+        size_t i = start;
+        size_t cur0 = start;
+        size_t cur1 = start + n - 1;
         bool last_is_c0 = false;
+        assert(cur0 <= cur1, "This should never happen");
+        assert(n <= points.n, "Number of indices should not exceed number of points: " + std::to_string(n) + " > " + std::to_string(points.n));
+        assert(indices_vec != nullptr, "Indices vector should not be null");
+        assert(indices_vec_tmp != nullptr, "Indices vector temporary should not be null");
+        assert(start + n - 1 < original_n, "Start + n - 1 should be less than original_n: " + std::to_string(start + n - 1) + " >= " + std::to_string(original_n));
 
         const size_t d = points.d;
         while (cur0 <= cur1) {
             const size_t idx = indices_vec[i];
+            assert(idx != std::numeric_limits<size_t>::max(), "Index should not be max size_t: " + std::to_string(idx));
+
             const float* p = points[idx];
 
             float dist1 = 0.0;
@@ -122,11 +159,11 @@ typedef struct indices {
             }
 
             if (dist1 < dist2) {
-                indices_vec_tmp[cur0] = indices_vec[i];
+                indices_vec_tmp[cur0] = idx;
                 last_is_c0 = true;
                 cur0++;
             } else {
-                indices_vec_tmp[cur1] = indices_vec[i];
+                indices_vec_tmp[cur1] = idx;
                 last_is_c0 = false;
                 cur1--;
             }
@@ -134,22 +171,15 @@ typedef struct indices {
             i++;
         }
 
-        size_t *swap = indices_vec;
-        indices_vec = indices_vec_tmp;
-        indices_vec_tmp = swap;
+        std::swap(indices_vec, indices_vec_tmp);
 
-        assert(cur0 > cur1);
+        assert(cur0 > cur1, "cur0 should be greater than cur1 after the loop");
 
         cur0 = last_is_c0 ? cur0 - 1 : cur0 - 1;
         cur1 = last_is_c0 ? cur1 + 1 : cur1 + 1;
 
         _cout << "CoresetTree: split: cur0 = " << cur0 << ", cur1 = " << cur1 << "\n";
-        assert(cur1 > cur0);
-
-
-        // Full range is [start, n - 1]
-        // Split 1 goes to [start, cur0]
-        // Split 2 goes to [cur1, n - 1]
+        assert(cur1 > cur0, "cur1 should be greater than cur0 after the loop");
 
         size_t n0 = cur0 - start + 1;
         size_t n1 = (start + n) - cur0 - 1;
@@ -159,11 +189,21 @@ typedef struct indices {
 
         // _cout << "CoresetTree: split: left [" << start0 << ", " << start0 + n0 << "] right [" << start1 << ", " << start1 + n1 << "]\n";
         _cout << "CoresetTree: split: left [" << start0 << ", " << start0 + n0 - 1 << "] (" << n0 << ") right [" << start1 << ", " << start1 + n1 - 1 << "] (" << n1 << ") sum: " << n0 + n1 << "\n";
-        assert(n0 + n1 == n && "Sum of split sizes should be equal to n");
+        assert(n0 + n1 == n, "Sum of split sizes should be equal to n");
+
+        assert(start0 < start1, "Start of left indices should be less than start of right indices: " + std::to_string(start0) + " >= " + std::to_string(start1));
+        assert(start0 + n0 <= start1, "End of left indices should be less than or equal to start of right indices: " + std::to_string(start0 + n0) + " > " + std::to_string(start1));
+        assert(start1 + n1 <= start + n, "End of right indices should be less than or equal to start + n: " + std::to_string(start1 + n1) + " > " + std::to_string(start + n));
+        assert(start0 + n0 <= start + n, "End of left indices should be less than or equal to start + n: " + std::to_string(start0 + n0) + " > " + std::to_string(start + n));
+
+        assert(start0 < original_n, "Start of left indices should be less than original_n: " + std::to_string(start0) + " >= " + std::to_string(original_n));
+        assert(start1 < original_n, "Start of right indices should be less than original_n: " + std::to_string(start1) + " >= " + std::to_string(original_n));
+        assert(start0 + n0 <= original_n, "End of left indices should be less than or equal to original_n: " + std::to_string(start0 + n0) + " > " + std::to_string(original_n));
+        assert(start1 + n1 <= original_n, "End of right indices should be less than or equal to original_n: " + std::to_string(start1 + n1) + " > " + std::to_string(original_n));
 
         return {
-            indices(n0, indices_vec, indices_vec_tmp, start0),  
-            indices(n1, indices_vec, indices_vec_tmp, start1)   
+            indices(n0, indices_vec, indices_vec_tmp, start0, flipped + 1, original_n),
+            indices(n1, indices_vec, indices_vec_tmp, start1, flipped + 1, original_n)
         };
 
     }
@@ -173,102 +213,25 @@ typedef struct indices {
     }
 
     size_t& operator[](size_t i) {
+        assert(i < n, "Index out of bounds: " + std::to_string(i + start) + " >= " + std::to_string(n));
+        assert(indices_vec != nullptr, "Indices vector should not be null");
+        assert(indices_vec_tmp != nullptr, "Indices vector temporary should not be null");
         return indices_vec[i + start];
     }
 
     const size_t& operator[](size_t i) const {
+        assert(i < n, "Index out of bounds: " + std::to_string(i + start) + " >= " + std::to_string(n));
+        assert(indices_vec != nullptr, "Indices vector should not be null");
+        assert(indices_vec_tmp != nullptr, "Indices vector temporary should not be null");
         return indices_vec[i + start];
     }
 
 private:
-    indices(size_t n, size_t* indices_vec, size_t* indices_vec_tmp, size_t start = 0)
-        : n(n), indices_vec(indices_vec), indices_vec_tmp(indices_vec_tmp), start(start) {}
-
+    indices(size_t n, size_t* indices_vec, size_t* indices_vec_tmp, size_t start = 0, size_t flipped = 0, size_t original_n = 0)
+        : n(n), indices_vec(indices_vec), indices_vec_tmp(indices_vec_tmp), start(start), flipped(flipped), original_n(original_n) {
+    }
 
 } CTIndices;
-
-typedef struct coreset {
-    flat_points points;
-    float *weights;
-
-    coreset() : points(), weights(nullptr) {}
-
-    coreset(size_t n, size_t d) : points(nullptr, n, d), weights(nullptr) {
-        
-        float * flat_vec = new float[n * d + n]; // n * d for points, n for weights
-        points.points = flat_vec;
-        weights = flat_vec + n * d; // Point to the end of points array
-    }
-
-    coreset(float* points, float* weights, size_t n, size_t d) : points(points, n, d), weights(weights) {
-        
-    }
-
-    coreset(const coreset&) = delete;
-    coreset& operator=(const coreset&) = delete;
-
-    coreset(coreset&& other) noexcept : points(other.points), weights(other.weights) {
-        weights = other.weights;
-        points = other.points;
-
-        other.weights = nullptr;
-        other.points = flat_points();
-    }
-
-    coreset& operator=(coreset&& other) noexcept {
-        if (this != &other) {
-            weights = other.weights;
-            points = other.points;
-
-            other.weights = nullptr;
-            other.points = flat_points();
-        }
-        return *this;
-    }
-
-    ~coreset() {
-        assert((points.points == nullptr) == (weights == nullptr) && "Points and weights should be either both null or both non-null");
-
-        if (points.points != nullptr) {
-            delete[] points.points;
-            points.points = nullptr; // Avoid dangling pointer
-            weights = nullptr; // Avoid dangling pointer
-        }
-    }
-
-    std::string csv() {
-        std::string csv = "w";
-        for (size_t j = 0; j < points.d; ++j) {
-            csv += ",x" + std::to_string(j);
-        }
-        csv += "\n";
-
-        for (size_t i = 0; i < points.n; ++i) {
-            csv += std::to_string(weights[i]);
-            for (size_t j = 0; j < points.d; ++j) {
-                csv += "," + std::to_string(points[i][j]);
-            }
-            csv += "\n";
-        }
-
-        return csv;
-    }
-
-} Coreset;
-
-#include <immintrin.h>
-
-
-static inline float hsum256_ps(__m256 v) {
-    __m128 vlow  = _mm256_castps256_ps128(v);
-    __m128 vhigh = _mm256_extractf128_ps(v, 1);
-    vlow  = _mm_add_ps(vlow, vhigh);
-    __m128 shuf = _mm_movehdup_ps(vlow);
-    __m128 sums = _mm_add_ps(vlow, shuf);
-    shuf        = _mm_movehl_ps(shuf, sums);
-    sums        = _mm_add_ss(sums, shuf);
-    return _mm_cvtss_f32(sums);
-}
 
 typedef struct ct_node {
     struct flat_points points; // NON OWNING PROPS
@@ -281,7 +244,7 @@ typedef struct ct_node {
     float cost;
 
     bool is_leaf() const {
-        assert((lc == nullptr) == (rc == nullptr));
+        assert((lc == nullptr) == (rc == nullptr ), "Both children should be either null or non-null");
         return lc == nullptr && rc == nullptr;
     }
 
@@ -299,9 +262,9 @@ typedef struct ct_node {
         }
     }
 
-    template<int Rounds=1>
+    template<int Rounds=3>
     size_t pick_centroid() {
-        assert(!std::isnan(cost) && !std::isinf(cost) && "Cost should not be NaN or Inf");
+        assert(!std::isnan(cost) && !std::isinf(cost), "Cost should not be NaN or Inf");
 
         float min_cost = cost; // The new centroid cost should be less than the current cost 
 
@@ -318,6 +281,7 @@ typedef struct ct_node {
             // loop for all points (loop through all indices)
             for (size_t i = 0; i < indices.size(); ++i) {
                 const size_t idx = indices[i];
+
                 const float* p = points[idx];
                 const float pweight =  weights != nullptr ? weights[idx] : 1.0;
 
@@ -331,7 +295,7 @@ typedef struct ct_node {
                 sum += priv_sum / cost;
 
 
-                assert(!std::isnan(sum) && !std::isinf(sum) && "Sum should not be NaN or Inf");
+                assert(!std::isnan(sum) && !std::isinf(sum), "Sum should not be NaN or Inf");
 
                 if (sum >= rand) {
 
@@ -367,19 +331,43 @@ typedef struct ct_node {
         }
 
         _cout << "CoresetTree: pick_centroid: pickedIDX = " << pickedIDX << ", min_cost = " << min_cost <<  ", cost = " << cost << "\n";
-        assert(min_cost < cost);
+        assert(min_cost < cost, "Picked centroid cost should be less than the current cost");
+        assert(pickedIDX < points.n, "Picked index out of bounds: " + std::to_string(pickedIDX) + " >= " + std::to_string(points.n));
+        assert(pickedIDX != centerIDX, "Picked index should not be equal to center index: " + std::to_string(pickedIDX) + " == " + std::to_string(centerIDX));
         return pickedIDX;
     }
 
     void split(size_t sampleIDX) {
+        assert(is_leaf(), "Only leaf nodes can be split");
+        assert(sampleIDX < points.n, "Sample index out of bounds: " + std::to_string(sampleIDX) + " >= " + std::to_string(points.n));
+        assert(sampleIDX != centerIDX, "Sample index should not be equal to center index: " + std::to_string(sampleIDX) + " == " + std::to_string(centerIDX));
+        assert(centerIDX < points.n, "Center index out of bounds: " + std::to_string(centerIDX) + " >= " + std::to_string(points.n));
+
+        for (size_t i = 0; i < indices.size(); ++i) {
+            assert(indices[i] < points.n, "Index out of bounds: " + std::to_string(indices[i]) + " >= " + std::to_string(points.n));
+        }
+
         auto [left_indices, right_indices] = indices.split(centerIDX, sampleIDX, points);
         _cout << "CoresetTree: split: left size = " << left_indices.size() << ", right size = " << right_indices.size() << "\n";
+
+        assert(left_indices.size() + right_indices.size() == indices.size(), "Sum of left and right indices should be equal to the original indices size: " + std::to_string(left_indices.size() + right_indices.size()) + " != " + std::to_string(indices.size()));
+        assert(left_indices.size() > 0 && right_indices.size() > 0, "Both left and right indices should have at least one element");    
+        assert(left_indices.size() < points.n && right_indices.size() < points.n, "Left and right indices should not exceed number of points: " + std::to_string(points.n));
+        for (size_t i = 0; i < left_indices.size(); ++i) {
+            assert(left_indices[i] < points.n, "Left index out of bounds: " + std::to_string(left_indices[i]) + " >= " + std::to_string(points.n));
+        }
+        
+        for (size_t i = 0; i < right_indices.size(); ++i) {
+            assert(right_indices[i] < points.n, "Right index out of bounds: " + std::to_string(right_indices[i]) + " >= " + std::to_string(points.n));
+        }
 
         lc = new ct_node(points, left_indices, centerIDX, this);
         rc = new ct_node(points, right_indices, sampleIDX, this);
 
         ct_node* node = this;
         while (node != nullptr) {
+
+
             node->cost = node->lc->cost + node->rc->cost;
             node = node->parent;
         }
@@ -403,12 +391,12 @@ typedef struct ct_node {
 
             for (size_t j = 0; j < d; ++j) {
                 const float diff = (center[j]/center_weight - p[j]/pweight);
-                assert(!std::isnan(diff) && !std::isinf(diff) && "Diff should not be NaN or Inf");
+                assert(!std::isnan(diff) && !std::isinf(diff), "Diff should not be NaN or Inf");
                 sum += diff * diff;
             }
         }
 
-        assert(!std::isnan(sum) && !std::isinf(sum) && "Sum should not be NaN or Inf");
+        assert(!std::isnan(sum) && !std::isinf(sum), "Sum should not be NaN or Inf");
         return sum;
     }
 
@@ -463,16 +451,19 @@ typedef struct ct_node {
         }
     }
 
-    Coreset extract_coreset() {
-        size_t m = count_leafs();
+    void extract_raw_inplace(
+        float* flat_points,
+        float* flat_weights,
+        size_t n, size_t d
+    ) {
 
-        Coreset coreset(m, points.d);
-        const size_t d = points.d;
-        size_t idx = 0;
-
+        assert(n > 0 && d > 0, "n and d should be greater than 0");
+        assert(flat_points != nullptr, "Flat points should not be null");
+        assert(flat_weights != nullptr, "Flat weights should not be null");
 
         std::vector<ct_node*> nodes = {this};
 
+        int idx = 0;
         while (!nodes.empty()) {
             ct_node* node = nodes.back();
             nodes.pop_back();
@@ -482,9 +473,13 @@ typedef struct ct_node {
                 const float* center = node->points[centerIDX];
                 const float new_weight = node->indices.size();
 
-                coreset.weights[idx] = new_weight;
+                // flat_weights[idx] = new_weight;
                 for (size_t j = 0; j < d; ++j) {
-                    coreset.points[idx][j] = center[j];
+                    flat_points[idx * d + j] = center[j];
+                }
+             
+                if (idx >= n) {
+                    throw std::runtime_error("Coreset size exceeds the number of points");
                 }
 
                 idx++;
@@ -494,23 +489,6 @@ typedef struct ct_node {
             }
         }
 
-
-        // for_each_leaf([&coreset, &idx, d](const ct_node* node) {
-        //     const size_t centerIDX = node->centerIDX;
-        //     const float* center = node->points[centerIDX];
-        //     const float new_weight = node->indices.size();
-
-        //     coreset.weights[idx] = new_weight;
-        //     for (size_t j = 0; j < d; ++j) {
-        //         coreset.points[idx][j] = center[j];
-        //     }
-
-        //     idx++;
-        // });
-        
-        assert (coreset.points.n == m && "Coreset size should be equal to number of leafs");
-
-        return coreset;
     }
 
 private:

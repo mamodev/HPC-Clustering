@@ -110,14 +110,25 @@ int containsNaNOrInf(const std::vector<T>& data) {
 }
 
 template<Dtype T>
-std::pair<Samples<T>, std::string> parseArgs(int argc, char **argv) {
-    // usage <cmd> <input file> <output file/folder>
+std::tuple<Samples<T>, std::string, size_t> parseArgs(int argc, char **argv) {
+    std::string usage = "Usage: <cmd> <input file> <output file/folder> [<optional: coreset_size = default 10000>]\n";
     if (argc < 3) {
-        throw std::invalid_argument("Usage: <cmd> <input file> <output file/folder>");
+        std::cerr << usage;
+        throw std::invalid_argument("Not enough arguments provided");
     }
 
     std::string inputFile = argv[1];
     std::string outputFile = argv[2];
+
+    int coresetSize = 10000; // default value
+    if (argc > 3) {
+        try {
+            coresetSize = std::stoi(argv[3]);
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid coreset size, using default value: 10000" << std::endl;
+        }
+    }
+        
     if (inputFile.empty() || outputFile.empty()) {
         throw std::invalid_argument("Input and output file/folder cannot be empty");
     }
@@ -133,5 +144,5 @@ std::pair<Samples<T>, std::string> parseArgs(int argc, char **argv) {
         throw std::invalid_argument("Output path must be a directory");
     }
 
-    return {readSamples<T>(inputFile), outputFile};
+    return {readSamples<T>(inputFile), outputFile, coresetSize};
 }

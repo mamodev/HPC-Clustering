@@ -1,15 +1,15 @@
-#include "CoresetTree.hpp"
-#include "parser.hpp"
-#include "perf.hpp"
-
 #include <optional>
 #include <mpi.h>
-#include <queue>
+#include <set>
+#include "CoresetTree.hpp"
+#include "CoresetStream.hpp"
+#include "parser.hpp"
+#include "perf.hpp"
 
 #define MASTER_RANK 0
 
 #if !defined(CORESET_SIZE)
-#define CORESET_SIZE 100000
+#define CORESET_SIZE 60
 #endif
 
 #if !defined(CLUSTERS)
@@ -87,8 +87,7 @@ void master(int argc, char **argv, int world_size) {
     uint32_t features = samples.features;
     MPI_Bcast(&features, 1, MPI_UINT32_T, MASTER_RANK, MPI_COMM_WORLD);
 
-    size_t stream_cursor = 0;
-    size_t stream_size =  samples.samples;
+  
 
     auto get_chunk_at = [&](size_t cursor) -> const float* {
         size_t wrapped_cursor = cursor % samples.samples;
@@ -98,21 +97,72 @@ void master(int argc, char **argv, int world_size) {
 
         return samples.data.data() + wrapped_cursor * samples.features; // Get the chunk of data at the cursor
     };
-
+    
     int first_layer = workers_for_step(0, world_size - 1);
     int next_worker = 0;
+    
+    size_t stream_cursor = 0;
+    size_t stream_size = 10 * samples.samples; 
 
+    std::vector<MPI_Request> requests;
+    std::vector<MPI_Status> statuses; // Statuses for the requests
+    std::vector<int> request_indices; // Indices of completed requests
+    std::vector<std::function<void(void)>> stream_send_timers;
 
-    auto stream_t = timer.start("stream");
-    while (stream_cursor + CORESET_SIZE < stream_size) {
-        auto end_stream_t = timer.start("stream-chunk");
+    assert(stream_size / CORESET_SIZE >= first_layer && "Stream size must be greater than or equal to CORESET_SIZE * first_layer");
+
+ 
+    for (int w = 0; w < first_layer; ++w) {
         const float *chunk = get_chunk_at(stream_cursor);
-        MPI_Send(chunk, CORESET_SIZE * features, MPI_FLOAT, next_worker + 1, 0, MPI_COMM_WORLD);
-        next_worker = (next_worker + 1) % first_layer;
         stream_cursor += CORESET_SIZE;
-        end_stream_t();
+        MPI_Isend(chunk, CORESET_SIZE * samples.features, MPI_FLOAT, w + 1, 0, MPI_COMM_WORLD, &requests.emplace_back());
+        stream_send_timers.emplace_back(timer.start("stream-send"));
     }
+
+    statuses.resize(requests.size());
+    request_indices.resize(requests.size());
+
+    std::set<int> eof_idx;
+    auto stream_t = timer.start("stream");
+    auto noop = [](){};
+
+    while (true) {        
+        int outcount = 0;
+        MPI_Waitsome(requests.size(), requests.data(), &outcount, request_indices.data(), statuses.data());
+
+        if (outcount == MPI_UNDEFINED) {
+            std::cout << "SENT ALL MESSAGES TO WORKERS" << std::endl;
+            break; 
+        }
+
+        assert(outcount > 0 && "mpi_waitsome returned negative outcount or zero, which should not happen here");
+        for (int r = 0; r < outcount; ++r) {
+            int idx = request_indices[r];
+
+            stream_send_timers[idx](); 
+            stream_send_timers[idx] = noop;
+
+            if (eof_idx.contains(idx)) {
+                continue;
+            }
+
+
+            if (stream_cursor + CORESET_SIZE > stream_size) {
+                eof_idx.insert(idx);
+                MPI_Isend(nullptr, 0, MPI_FLOAT, idx + 1, 0, MPI_COMM_WORLD, &requests[idx]);
+
+            } else {
+                stream_send_timers[idx] = timer.start("stream-send");
+                const float *chunk = get_chunk_at(stream_cursor);
+                stream_cursor += CORESET_SIZE;
+                MPI_Isend(chunk, CORESET_SIZE * samples.features, MPI_FLOAT, idx + 1, 0, MPI_COMM_WORLD, &requests[idx]);
+            }
+        }
+    }
+
     stream_t();
+
+
 
     std::cout << "Master process ended scattering data to workers." << std::endl;
 
@@ -134,13 +184,11 @@ void worker(MPI_Comm &workers) {
 
     char outdir[255];
     MPI_Bcast(outdir, 255, MPI_CHAR, MASTER_RANK, MPI_COMM_WORLD);
-
+    
     uint32_t features;
     MPI_Bcast(&features, 1, MPI_UINT32_T, MASTER_RANK, MPI_COMM_WORLD);
 
     const uint32_t STEP = worker_step(world_size, world_rank);
-
-    bool IS_SINK = (STEP == steps(world_size) - 1);
 
     const size_t POINTS_SIZE = CORESET_SIZE * features;
     const size_t WEIGHTS_SIZE = CORESET_SIZE;
@@ -159,7 +207,7 @@ void worker(MPI_Comm &workers) {
     const int TARGET_TERMINATIONS = STEP == 0 ? 1 : workers_for_step(STEP - 1, world_size);
 
     bool stored_in[2] = { false, false };
-    MPI_Request in[2];
+    MPI_Request in[2], out = MPI_REQUEST_NULL;
 
     float *flat_in_vecs = new float[IN_SIZE * 4];
     std::span<float> in_vecs[4] = {
@@ -169,24 +217,20 @@ void worker(MPI_Comm &workers) {
         std::span<float>(flat_in_vecs + 3 * IN_SIZE, IN_SIZE)
     };
 
+    std::vector<float> out_vec(OUT_SIZE);
 
     MPI_Irecv(in_vecs[0].data(), IN_SIZE, MPI_FLOAT, MPI_ANY_SOURCE, STEP, IN_COMM, &in[0]);
     MPI_Irecv(in_vecs[1].data(), IN_SIZE, MPI_FLOAT, MPI_ANY_SOURCE, STEP, IN_COMM, &in[1]);
 
     srand(static_cast<unsigned int>(world_rank + 1));
 
-
-    MPI_Request out_r = MPI_REQUEST_NULL;
-    float *flat_out_vecs = new float[OUT_SIZE];
-
     int terminations = 0;
 
     auto t_running = timer.start("running");
     auto t_l_running = timer.start("running-" + std::to_string(STEP));
-    while ( true )
-    {
+    while ( true )  
+    {   
         stored_in[0] = false;
-        stored_in[1] = false;
 
         auto t_w_input = timer.start("w-input");
         auto t_lw_input = timer.start("w-input-" + std::to_string(STEP));
@@ -198,118 +242,99 @@ void worker(MPI_Comm &workers) {
             MPI_Waitany(2, in, &index, &status);
             assert(index != MPI_UNDEFINED && "Index must not be undefined");
             assert(index < 2 && "Index must be less than 2");
-
+            
             MPI_Get_count(&status, MPI_FLOAT, &count);
             if (count != 0) {
                 std::swap(in_vecs[index], in_vecs[2 + index]); // Swap the received vector with the next one to reuse it
                 stored_in[index] = true;
             }
 
-            if (count == 0) {
-                std::cout << "W[" << world_rank << "] received termination signal in step " << STEP << std::endl;
+            if (count == 0)
                 terminations++;
-            }
 
             MPI_Irecv(in_vecs[index].data(), IN_SIZE, MPI_FLOAT, MPI_ANY_SOURCE, STEP, IN_COMM, &in[index]);
-
-            if (terminations >= TARGET_TERMINATIONS)
+            
+            if (terminations >= TARGET_TERMINATIONS) 
                 break;
         }
         t_w_input();
         t_lw_input();
 
-
         auto t_w_send = timer.start("w-send");
         auto t_lw_send = timer.start("w-send-" + std::to_string(STEP));
-
-        if (out_r != MPI_REQUEST_NULL) {
-            std::cout << "BLOCK W[" << world_rank << "] waiting for previous send to complete in step " << STEP << std::endl;
-            MPI_Wait(&out_r, MPI_STATUS_IGNORE);
-            std::cout << "UNBLOCK W[" << world_rank << "] previous send completed in step " << STEP << std::endl;
-            out_r = MPI_REQUEST_NULL;
+        // std::cout << "W[" << world_rank << "] processing data in step " << STEP << std::endl;
+        if (out != MPI_REQUEST_NULL) {
+            // std::cout << "W[" << world_rank << "] waiting for outstanding send request in step " << STEP << std::endl;
+            MPI_Wait(&out, MPI_STATUS_IGNORE);
         }
-
         t_w_send();
         t_lw_send();
 
         if (!stored_in[0] || !stored_in[1])  // Termination condition and no data to flush
             break;
 
-
         if (stored_in[0] && stored_in[1]) { // Reduce -> out
             auto t_w_merge = timer.start("w-merge");
             auto t_lw_merge = timer.start("w-merge-" + std::to_string(STEP));
 
-            // float *merged_vec = new float[2 * POINTS_SIZE + 2 * WEIGHTS_SIZE];
+            float *merged_vec = new float[2 * POINTS_SIZE + 2 * WEIGHTS_SIZE];
 
-            // memcpy(merged_vec, in_vecs[2].data(), POINTS_SIZE * sizeof(float));
-            // memcpy(merged_vec + POINTS_SIZE, in_vecs[3].data(), POINTS_SIZE * sizeof(float));
+            memcpy(merged_vec, in_vecs[2].data(), POINTS_SIZE * sizeof(float));
+            memcpy(merged_vec + POINTS_SIZE, in_vecs[3].data(), POINTS_SIZE * sizeof(float));
+            
+            if (STEP != 0) { 
+                memcpy(merged_vec + 2 * POINTS_SIZE, in_vecs[2].data() + POINTS_SIZE, WEIGHTS_SIZE * sizeof(float));
+                memcpy(merged_vec + 2 * POINTS_SIZE + WEIGHTS_SIZE, in_vecs[3].data() + POINTS_SIZE, WEIGHTS_SIZE * sizeof(float));
+            }
 
-            // if (STEP != 0) {
-            //     memcpy(merged_vec + 2 * POINTS_SIZE, in_vecs[2].data() + POINTS_SIZE, WEIGHTS_SIZE * sizeof(float));
-            //     memcpy(merged_vec + 2 * POINTS_SIZE + WEIGHTS_SIZE, in_vecs[3].data() + POINTS_SIZE, WEIGHTS_SIZE * sizeof(float));
-            // }
+            auto root = CoresetTree(merged_vec, STEP == 0 ? nullptr : merged_vec + 2 * POINTS_SIZE, 2 * CORESET_SIZE, features, CORESET_SIZE);
+            root.extract_raw_inplace(out_vec.data(), out_vec.data() + POINTS_SIZE, CORESET_SIZE, features);
 
-
-            // auto root = CoresetTree(merged_vec, STEP == 0 ? nullptr : merged_vec + 2 * POINTS_SIZE, 2 * CORESET_SIZE, features, CORESET_SIZE);
-
-            // root.extract_raw_inplace(flat_out_vecs, flat_out_vecs + POINTS_SIZE, CORESET_SIZE, features);
-
-            // delete[] merged_vec;
+            delete[] merged_vec;
 
             t_lw_merge();
             t_w_merge();
         } else {
-            assert(false && "Flush should be disabled now");
             int idx = stored_in[0] ? 0 : 1;
-            memcpy(flat_out_vecs, in_vecs[idx].data(), in_vecs[idx].size() * sizeof(float));
-
+            memcpy(out_vec.data(), in_vecs[idx].data(), in_vecs[idx].size() * sizeof(float));
             if (IN_SIZE != OUT_SIZE) {
-                memset(flat_out_vecs + IN_SIZE, 0, (OUT_SIZE - IN_SIZE) * sizeof(float));
+                memset(out_vec.data() + IN_SIZE, 0, (OUT_SIZE - IN_SIZE) * sizeof(float)); 
             }
         }
 
 
         if (NEXT_STEP_MIN_W != -1 && NEXT_STEP_MAX_W != -1) {
             int next_worker = NEXT_STEP_MIN_W + rand() % (NEXT_STEP_MAX_W - NEXT_STEP_MIN_W + 1);
-            std::cout << "W[" << world_rank << "] sending data to worker " << next_worker << " in step " << STEP + 1 << std::endl;
-            MPI_Isend(flat_out_vecs, OUT_SIZE, MPI_FLOAT, next_worker, STEP + 1, workers, &out_r);
+            // std::cout << "W[" << world_rank << "] sending data to worker " << next_worker << " in step " << STEP + 1 << std::endl;
+            MPI_Isend(out_vec.data(), OUT_SIZE, MPI_FLOAT, next_worker, STEP + 1, workers, &out);
         }
 
         if (!stored_in[0] || !stored_in[1]) {  // Termination and data flushed
-            assert(false && "For the moment flush should be disabled");
-            // MPI_Wait(&out, MPI_STATUS_IGNORE);
-            // break;
+            MPI_Wait(&out, MPI_STATUS_IGNORE);
+            break;
         }
     }
+   
 
 
-    std::cout << "========================= [W" << world_rank << "] STEP " << STEP << " finished with " << terminations << " terminations." << std::endl;
-
-    delete[] flat_in_vecs;
-    delete[] flat_out_vecs;
 
     if (NEXT_STEP_MIN_W != -1 && NEXT_STEP_MAX_W != -1) {
-        std::vector<MPI_Request> termination_requests;
-
         for (int i = NEXT_STEP_MIN_W; i <= NEXT_STEP_MAX_W; ++i) {
             std::cout << "W[" << world_rank << "] sending termination signal to worker " << i << " in step " << STEP + 1 << std::endl;
-            MPI_Isend(nullptr, 0, MPI_FLOAT, i, STEP + 1, workers, &termination_requests.emplace_back());
+            MPI_Isend(nullptr, 0, MPI_FLOAT, i, STEP + 1, workers, &out);
+            MPI_Wait(&out, MPI_STATUS_IGNORE);
         }
-
-        MPI_Waitall(termination_requests.size(), termination_requests.data(), MPI_STATUSES_IGNORE);
     }
-
+    
     t_running();
     t_l_running();
-
-
+        
+    delete[] flat_in_vecs;
     std::cout << "Worker " << world_rank << " in step " << STEP << " finished with " << terminations << " terminations." << std::endl;
 
     std::string perf_file = std::string(outdir) + "/delta_w_" + std::to_string(world_rank) + ".csv";
     timer.to_file(perf_file);
 }
-
 
 int main(int argc, char **argv)
 {
@@ -322,9 +347,7 @@ int main(int argc, char **argv)
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
-    // assert(world_size >= 3 && "Number of processes must be at least 3 (1 master + 2 worker)");
     assert(world_size < std::numeric_limits<uint32_t>::max() && "Number of processes must be less than INT_MAX");
-    // assert(world_size % 2 != 0 && "Number of processes must be odd (1 master + even number of workers)");
 
     MPI_Comm workers;
     MPI_Comm_split(MPI_COMM_WORLD, world_rank == 0 ? 0 : 1, world_rank, &workers);
@@ -368,20 +391,20 @@ int main(int argc, char **argv)
             assert(step_workers_list[s].size() == expected_count && "Step workers list size must match expected count");
 
         }
-
-        perf.resume();
+        
+        perf.resume(); 
         master(argc, argv, world_size);
-        perf.pause();
+        perf.pause(); 
 
 
     } else {
         perf.resume();
         worker(workers);
-        perf.pause();
+        perf.pause(); 
 
         MPI_Comm_free(&workers);
     }
-
+   
     MPI_Finalize();
 
 }

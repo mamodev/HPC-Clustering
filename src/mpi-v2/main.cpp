@@ -1,9 +1,6 @@
+#include "CoresetTree.hpp"
 #include "perf.hpp"
 #include "mpi_wrap.h"
-
-#include "CoresetTree.hpp"
-#include "CoresetStream.hpp"
-#include "Kmeans.hpp"
 #include "parser.hpp"
 #include <set>
 #include <optional>
@@ -14,7 +11,7 @@
 // #define _cout std::cout
 
 #if !defined(CORESET_SIZE)
-#define CORESET_SIZE 6000
+#define CORESET_SIZE 10000
 #endif
 
 #if !defined(CLUSTERS)
@@ -261,6 +258,15 @@ public:
     bool has_first_class_rank_support(int rank) const {
         return ranks.contains(rank);
     }
+
+    bool is_rank_master(int rank, int worker) const {
+        assert(rank >= 0 && rank < rank_masters.size() && "Rank must be within the bounds of rank_masters");
+
+        if (rank == 0) {
+            return worker == 0; // For rank 0, the master is always worker 0
+        }
+        return rank_masters[rank] == worker; // For other ranks, check if the worker is the master of that rank
+    }
 };
 
 
@@ -349,6 +355,48 @@ std::vector<std::vector<int>> genRankMap(int world_size, int max_rank)
     
     return rank_map;
 }
+
+// std::vector<std::vector<int>> genRankMap(int world_size, int max_rank)
+// {   
+//     assert(world_size > 0 && "Number of workers must be greater than 0");
+//     assert(max_rank > 0 && "Maximum rank must be greater than 0");
+//     assert(world_size % 2 != 0 && "Number of workers must be even: (world_size - 1) is the number of workers excluding the master node");
+
+//     std::vector<std::vector<int>> rank_map(max_rank);
+
+//     int next_worker = 0;
+//     int num_worker_per_rank = world_size - 1; // Exclude the master node
+//     int last_split_rank = -1;
+//     for (int r = 0; r < max_rank; ++r) {
+//         for (int i = 0; i < num_worker_per_rank; ++i) {
+//             rank_map[r].push_back(next_worker + 1); // +1 to skip the master node
+//             next_worker = (next_worker + 1) % (world_size - 1); // Wrap around to the next worker, excluding the master node
+//             // rank_map[r].push_back(i + 1); // +1 to skip the master node
+        
+//         }
+
+//         num_worker_per_rank = (num_worker_per_rank) / 2 + (num_worker_per_rank % 2 != 0 ? 1: 0);
+
+
+
+//         if (num_worker_per_rank == 1) {
+//             last_split_rank = r; // Remember the last rank that had workers
+//             break;
+//         }
+//     }
+
+//     assert(last_split_rank != -1 && "There should be at least one rank with workers");
+//     assert(!rank_map.empty() && "Rank map should not be empty");
+
+//     // assign rank tail to Woker1 
+//     for (int r = last_split_rank + 1; r < max_rank; ++r) {
+//         // // rank_map[r].push_back(1); // Assign Worker 1 to all remaining ranks
+//         // next_worker = (next_worker + 1) % (world_size - 1);
+//         rank_map[r].push_back(next_worker + 1); // +1 to skip the master node
+//     }   
+    
+//     return rank_map;
+// }
 
 int randomRankWorker(int rank, const std::vector<std::vector<int>>& rank_map)
 {
@@ -441,7 +489,7 @@ int main(int argc, char **argv)
         }
 
         auto start_time = std::chrono::high_resolution_clock::now();
-        auto [samples, outPath] = parseArgs<float>(argc, argv);
+        auto [samples, outPath, _] = parseArgs<float>(argc, argv);
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
         std::cout << "Parsing took " << duration.count() << " ms" << std::endl;
@@ -462,7 +510,7 @@ int main(int argc, char **argv)
         perf.resume(); // Resume perf after parsing
 
         size_t stream_cursor = 0;
-        size_t stream_size = 10 * samples.samples; 
+        size_t stream_size = samples.samples; 
 
         auto get_chunk_at = [&](size_t cursor) -> const float* {
             size_t wrapped_cursor = cursor % samples.samples;
@@ -485,12 +533,12 @@ int main(int argc, char **argv)
 
         std::set<int> eof_idx;
 
+        size_t STAT_CORESET_SENT = num_workers; // Number of coresets sent by rank 0
         while (true) {        
             int outcount = 0;
             mpi_waitsome(requests.size(), requests.data(), &outcount, request_indices.data(), statuses.data());
 
             if (outcount == MPI_UNDEFINED) {
-                std::cout << "SENT ALL MESSAGES TO WORKERS" << std::endl;
                 break; // All messages sent, exit the loop
             }
 
@@ -508,11 +556,19 @@ int main(int argc, char **argv)
                     const float *chunk = get_chunk_at(stream_cursor);
                     stream_cursor += CORESET_SIZE;
                     mpi_isend(chunk, CORESET_SIZE * samples.features, MPI_FLOAT, idx + 1, 0, MPI_COMM_WORLD, &requests[idx]);
+                    STAT_CORESET_SENT += 1;
                 }
             }
         }
 
+        std::cout << "Master process finished sending data to workers. total rank0 coresets sent: " << STAT_CORESET_SENT << std::endl;
     } else {
+
+
+        size_t STAT_AGGS = 0; // Number of aggregations performed
+        size_t STAT_RANK0_CORESETS = 0; // Number of rank 0 coresets received
+        size_t STAT_RANK0_AGGS = 0; // Number of rank 0 aggregations performed
+        size_t STAT_RANK1_AGGS = 0; // Number of rank 1 aggregations performed
 
         // _cout << "P[" << world_rank << "] started." << std::endl;
         NodeState node_state(rank_map, world_rank);
@@ -634,18 +690,21 @@ int main(int argc, char **argv)
                         // const MPI_Comm comm = flush_to == 0 ? MPI_COMM_WORLD : worker_comm;
                         // const int dest = flush_to == 0 ? MASTER_RANK : flush_to - 1; 
 
-
                         if (coreset_buff) {
-                            _cout << "P[" << world_rank << "] flushing coreset for rank " << rank 
-                                      << " to worker " << flush_to 
-                                      << " (flush rank: " << flush_rank << ")" << std::endl;
+                            std::cout << "[" << world_rank << ", " << rank << "] ==> [" << flush_to << ", " << flush_rank << "]" << std::endl;
+                     
+                            // std::cout << "P[" << world_rank << "] flushing coreset for rank " << rank 
+                            //           << " to worker " << flush_to 
+                            //           << " (flush rank: " << flush_rank << ")" << std::endl;
 
                             issue_send_peer_req(flush_to, flush_rank, coreset_buff, coreset_size);
                             coresets[rank] = nullptr; 
-                        } 
+                        } else {
+                            std::cout << "[" << world_rank << ", " << rank << "] --> [" << flush_to << ", " << flush_rank << "]" << std::endl;
+                        }
 
-                        _cout << "P[" << world_rank << "] Sending termination signal to worker " << flush_to 
-                                  << " (flush rank: " << flush_rank << ")" << std::endl;
+                        // std::cout << "P[" << world_rank << "] Sending termination signal to worker " << flush_to 
+                        //           << " (flush rank: " << flush_rank << ")" << std::endl;
                         issue_send_peer_req(flush_to, flush_rank, nullptr, 0);
                     }
                     
@@ -671,10 +730,32 @@ int main(int argc, char **argv)
 
             // check if we received a rank outside of the node ranks
             if(!node_state.has_first_class_rank_support(rank)) {
-                std::cerr << "TODO implement handling of ranks outside of the node ranks. (Flushed from master rank node)" << std::endl;
+                std::cout << "\n\n\tTODO implement handling of ranks outside of the node ranks. (Flushed from master rank node)\n" << std::endl;
                 delete[] info.buffer;
                 return; 
             }
+
+            // if (node_state.in_comunication_closed(rank)) {
+            //     std::cout << "P[" << world_rank << "] received data from worker " << real_source 
+            //               << " for rank " << rank << " but the node is in communication closed state." 
+            //               << std::endl;
+            
+            //     usleep(1000); // Sleep for a second to avoid busy waitinga
+            //     assert(false);
+            // } 
+
+            // assert(!node_state.in_comunication_closed(rank));
+
+            if (rank == 0 && is_master_msg) {
+                STAT_RANK0_CORESETS++;
+            }
+
+            // check if real source is master rank for rank n - 1 
+            if (rank > 0 && node_state.is_rank_master(rank - 1, real_source)) {
+                std::cout << "Flush from " << real_source << " for rank " << rank - 1 << " to worker " << world_rank  << std::endl;
+            }
+                
+
 
             if (coresets[rank] == nullptr) {
                 coresets[rank] = info.buffer;
@@ -696,6 +777,13 @@ int main(int argc, char **argv)
                     curr_rank != 0,
                     CORESET_SIZE, features);
 
+                STAT_AGGS++;
+                if (curr_rank == 1) {
+                    STAT_RANK1_AGGS++;
+                } else if (curr_rank == 0) {
+                    STAT_RANK0_AGGS++;
+                }
+
                 auto ctree = CoresetTree(merge_buffer, 
                     with_weights ? merge_buffer + CORESET_POINTS_SIZE * 2 : nullptr,
                     CORESET_SIZE * 2, features, CORESET_SIZE);
@@ -715,10 +803,10 @@ int main(int argc, char **argv)
                 node_state.has_first_class_rank_support(curr_rank) &&
                 coresets[curr_rank]
             );
-
             assert(running_coreset != info.buffer && "Running coreset should not be the same as the received buffer");
 
             coreset_extract_buffer = new float[CORESET_TOTAL_SIZE];
+            
             delete[] info.buffer; // Free the received buffer
                             
             if (!node_state.has_first_class_rank_support(rank + 1)) {
@@ -782,7 +870,7 @@ int main(int argc, char **argv)
             }
 
             if (event_clear_peers_recvs) {
-                std::cout << "P[" << world_rank << "] clearing peer recvs." << std::endl;
+                // std::cout << "P[" << world_rank << "] clearing peer recvs." << std::endl;
                 for (size_t i = 0; i < peer_requests.size(); ++i) 
                     if (!peer_request_info[i].is_send_req) 
                         MPI_Cancel(&peer_requests[i]); 
@@ -791,7 +879,7 @@ int main(int argc, char **argv)
             }
 
             if (event_clear_master_recvs) {
-                std::cout << "P[" << world_rank << "] clearing master recvs. to clear: " << master_requests.size() << std::endl;
+                // std::cout << "P[" << world_rank << "] clearing master recvs. to clear: " << master_requests.size() << std::endl;
 
                 for (size_t i = 0; i < master_requests.size(); ++i) 
                     MPI_Cancel(&master_requests[i]); 
@@ -804,9 +892,65 @@ int main(int argc, char **argv)
         delete[] merge_buffer;
         delete[] coreset_extract_buffer; // Free the coreset extract buffer
 
-        std::cout << "P[" << world_rank << "] finished receiving data." << std::endl;
+        size_t total_core_sets = 0;
+        size_t total_aggregations = 0;
+        size_t total_rank0_aggregations = 0;
+        size_t total_rank1_aggregations = 0;
+        MPI_Reduce(&STAT_AGGS, &total_aggregations, 1, MPI_UNSIGNED_LONG, MPI_SUM, MASTER_RANK, worker_comm);
+        MPI_Reduce(&STAT_RANK0_CORESETS, &total_core_sets, 1, MPI_UNSIGNED_LONG, MPI_SUM, MASTER_RANK, worker_comm);
+        MPI_Reduce(&STAT_RANK1_AGGS, &total_rank1_aggregations, 1, MPI_UNSIGNED_LONG, MPI_SUM, MASTER_RANK, worker_comm);
+        MPI_Reduce(&STAT_RANK0_AGGS, &total_rank0_aggregations, 1, MPI_UNSIGNED_LONG, MPI_SUM, MASTER_RANK, worker_comm);
+
+
+        MPI_Barrier(worker_comm); // Ensure all ranks are synchronized before exiting
+        
+        std::cout << "P[" << world_rank << "] Exit. STAT_AGGS: " << STAT_AGGS 
+                  << ", STAT_RANK0_CORESETS: " << STAT_RANK0_CORESETS 
+                  << ", STAT_RANK0_AGGS: " << STAT_RANK0_AGGS 
+                  << ", STAT_RANK1_AGGS: " << STAT_RANK1_AGGS 
+                  << std::endl;
+
+        usleep(1000); // Sleep for a second to allow all ranks to finish printing
+        MPI_Barrier(worker_comm); // Ensure all ranks are synchronized before exiting
+
+
+        if (world_rank == 1) {
+
+            std::cout 
+                    << "P[" << world_rank << "] Final statistics: "
+                    << "\n\tTotal aggregations performed: " << total_aggregations
+                    << " \n\tTotal rank 0 coresets received: " << total_core_sets
+                    << " \n\tTotal rank 0 aggregations performed: " << total_rank0_aggregations
+                    << " \n\tTotal rank 1 aggregations performed: " << total_rank1_aggregations 
+            << std::endl;
+
+
+            // print coresets stored 
+            std::cout << "Coresets stored: " << std::endl;
+            for (size_t r = 0; r < coresets.size(); ++r) {
+                if (coresets[r] != nullptr) {
+                    std::cout << "\t Rank " << r << ": yes" << std::endl;
+                } 
+            }
+        } else {
+            // ALL RANKS MUST BE EMPTY
+            std::string coreset_str = "Coresets rank: " + std::to_string(world_rank) + ": ";
+            for (size_t r = 0; r < coresets.size(); ++r) {
+                if (coresets[r] != nullptr) {
+                    coreset_str += std::to_string(r) + " ";
+                    // std::cerr << "P[" << world_rank << "] ERROR: Coreset for rank " << r << " in worker " << world_rank 
+                    //           << " is not empty! This should not happen." << std::endl;
+                    // MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+                }
+            }
+            std::cout << coreset_str << std::endl;
+        }
+
+
         MPI_Comm_free(&worker_comm); // Free the worker communicator
     }
+
+    
 
     perf.pause(); // Pause perf after sending all data
     MPI_Finalize();

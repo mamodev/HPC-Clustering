@@ -1,4 +1,3 @@
-#include <omp.h>
 #include "CoresetTree.hpp"
 #include "CoresetStream.hpp"
 #include "Kmeans.hpp"
@@ -26,7 +25,7 @@ int main(int argc, char **argv) {
     auto deltas = DeltaTimer();
     perf.pause();
 
-    auto [samples, outPath] = parseArgs<float>(argc, argv);
+    auto [samples, outPath, _] = parseArgs<float>(argc, argv);
     std::vector<int> labels(samples.samples, -1);
 
     CoresetStream coreset_stream(CORESET_SIZE, samples.features);

@@ -432,7 +432,7 @@ int main(int argc, char **argv)
         }
 
         auto start_time = std::chrono::high_resolution_clock::now();
-        auto [samples, outPath] = parseArgs<float>(argc, argv);
+        auto [samples, outPath, _] = parseArgs<float>(argc, argv);
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
         std::cout << "Parsing took " << duration.count() << " ms" << std::endl;

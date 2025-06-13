@@ -7,3 +7,10 @@ https://www.vldb.org/conf/2003/papers/S04P02.pdf
 
 Impl:
 https://github.com/NicerWang/CluStream?tab=readme-ov-file
+
+
+https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=9723527
+
+
+Original paper on coresets proof:
+https://arxiv.org/pdf/1810.12826

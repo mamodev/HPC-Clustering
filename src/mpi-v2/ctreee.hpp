@@ -194,8 +194,14 @@ typedef struct coreset {
     coreset() : points(), weights(nullptr) {}
 
     coreset(size_t n, size_t d) : points(nullptr, n, d), weights(nullptr) {
-        points.points = new float[n * d];
-        weights = new float[n];
+        
+        float * flat_vec = new float[n * d + n]; // n * d for points, n for weights
+        points.points = flat_vec;
+        weights = flat_vec + n * d; // Point to the end of points array
+    }
+
+    coreset(float* points, float* weights, size_t n, size_t d) : points(points, n, d), weights(weights) {
+        
     }
 
     coreset(const coreset&) = delete;
@@ -221,17 +227,12 @@ typedef struct coreset {
     }
 
     ~coreset() {
-        // if (points.points != nullptr || weights != nullptr) {
-        //     std::cout << "Coreset destructor: freeing memory\n";
-        // }
-         // Free the allocated memory
+        assert((points.points == nullptr) == (weights == nullptr) && "Points and weights should be either both null or both non-null");
 
         if (points.points != nullptr) {
+            // std::cout << "CoresetTree.hpp: delete[] points.points: " << (void*)points.points << " LINE: " << __LINE__ << std::endl;
             delete[] points.points;
             points.points = nullptr; // Avoid dangling pointer
-        }
-        if (weights != nullptr) {
-            delete[] weights;
             weights = nullptr; // Avoid dangling pointer
         }
     }
@@ -252,6 +253,11 @@ typedef struct coreset {
         }
 
         return csv;
+    }
+
+    void disown() {
+        points.points = nullptr;
+        weights = nullptr;
     }
 
 } Coreset;
@@ -512,6 +518,49 @@ typedef struct ct_node {
 
         return coreset;
     }
+
+
+    void extract_raw_inplace(
+        float* flat_points,
+        float* flat_weights,
+        size_t n, size_t d
+    ) {
+
+        assert(n > 0 && d > 0 && "n and d should be greater than 0");
+        assert(flat_points != nullptr && "Flat points should not be null");
+        assert(flat_weights != nullptr && "Flat weights should not be null");
+
+        std::vector<ct_node*> nodes = {this};
+
+        int idx = 0;
+        while (!nodes.empty()) {
+            ct_node* node = nodes.back();
+            nodes.pop_back();
+
+            if (node->is_leaf()) {
+                const size_t centerIDX = node->centerIDX;
+                const float* center = node->points[centerIDX];
+                const float new_weight = node->indices.size();
+
+                flat_weights[idx] = new_weight;
+                for (size_t j = 0; j < d; ++j) {
+                    flat_points[idx * d + j] = center[j];
+                }
+             
+                if (idx >= n) {
+                    throw std::runtime_error("Coreset size exceeds the number of points");
+                }
+
+                idx++;
+            } else {
+                if (node->lc) nodes.push_back(node->lc);
+                if (node->rc) nodes.push_back(node->rc);
+            }
+        }
+
+
+    }
+
 
 private:
     ct_node(const flat_points& points, const CTIndices& indices, size_t centerIDX, ct_node* parent = nullptr, float* weights = nullptr)

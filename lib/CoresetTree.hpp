@@ -1,5 +1,7 @@
 #pragma once
 
+#include "assert.hpp"
+
 #include <cstddef>
 #include <cmath>
 #include <stdexcept>
@@ -8,27 +10,6 @@
 #include <vector>
 #include <iostream>
 #include <cstring>
-
-
-// cretate a fale _cout 
-class fake_ostream {
-public:
-    template<typename T>
-    fake_ostream& operator<<(const T&) {
-        return *this;
-    }
-
-    fake_ostream& operator<<(std::ostream& (*)(std::ostream&)) {
-        return *this;
-    }
-};
-
-
-#ifdef DEBUG
-#define _cout std::cout
-#else
-#define _cout fake_ostream()
-#endif
 
 
 
@@ -294,17 +275,6 @@ typedef struct ct_node {
         }
     }
 
-
-    std::vector<std::pair<size_t, size_t>> get_leafs_ranges() const {
-        std::vector<std::pair<size_t, size_t>> ranges;
-        
-        for_each_leaf([&ranges](const ct_node* node) {
-            ranges.emplace_back(node->indices.start, node->indices.start + node->indices.size() - 1);
-        });
-
-        return ranges;
-    }   
-
     template<int Rounds=3>
     size_t pick_centroid() {
         assert(!std::isnan(cost) && !std::isinf(cost) && "Cost should not be NaN or Inf");
@@ -392,8 +362,7 @@ typedef struct ct_node {
 
     static ct_node root(const flat_points& points, float* weights) {
         CTIndices indices = CTIndices::create(points.n);
-        // __pick_random(indices.size())
-        return ct_node(points, indices, indices[1234], nullptr, weights);
+        return ct_node(points, indices, indices[__pick_random(indices.size())], nullptr, weights);
     }
 
     float calcCost() {
@@ -469,6 +438,48 @@ typedef struct ct_node {
         }
     }
 
+
+    void extract_raw_inplace(
+        float* flat_points,
+        float* flat_weights,
+        size_t n, size_t d
+    ) {
+        assert(n == count_leafs() && "Coreset size should be equal to number of leafs");
+        assert(flat_points != nullptr && "Flat points should not be null");
+        assert(flat_weights != nullptr && "Flat weights should not be null");
+        assert(d > 0 && "Dimension d should be greater than 0");
+        assert(points.points != nullptr && "Points should not be null");
+       
+        size_t idx = 0;
+        std::vector<ct_node*> nodes = {this};
+
+        while (!nodes.empty()) {
+            ct_node* node = nodes.back();
+            nodes.pop_back();
+
+            if (node->is_leaf()) {
+                const size_t centerIDX = node->centerIDX;
+                const float* center = node->points[centerIDX];
+                const float new_weight = node->indices.size();
+
+                flat_weights[idx] = new_weight;
+                for (size_t j = 0; j < d; ++j) {
+                    flat_points[idx * d + j] = center[j];
+                }
+
+                assert(idx < n && "Coreset size exceeds the number of points");
+                assert(flat_points + idx * d < flat_points + n * d && "Accessing out of bounds in flat_points");    
+
+                idx++;
+            } else {
+                if (node->lc) nodes.push_back(node->lc);
+                if (node->rc) nodes.push_back(node->rc);
+            }
+        }
+
+
+    }
+
     Coreset extract_coreset() {
         size_t m = count_leafs();
 
@@ -539,38 +550,22 @@ CTNode CoresetTree(float* points, float* weights, size_t n, size_t d, size_t k) 
 
     _cout << std::endl;
     for (size_t i = 1; i < k; ++i) {
-        // std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-        
-        std::cout << "[CoresetTree] Iteration " << i << "\n";
-
+        _cout << "[CoresetTree] Iteration " << i << "\n";
 
         CTNode& leaf = root.random_leaf();
 
-        std::cout  << "CoresetTree: leaf center = " << leaf.centerIDX << "\n";
-        std::cout  << "CoresetTree: leaf cost = " << leaf.cost << "\n";
-        std::cout  << "CoresetTree: leaf size = " << leaf.indices.size() << "\n";
+        _cout << "CoresetTree: leaf center = " << leaf.centerIDX << "\n";
+        _cout << "CoresetTree: leaf cost = " << leaf.cost << "\n";
+        _cout << "CoresetTree: leaf size = " << leaf.indices.size() << "\n";
 
         size_t pickedIDX = leaf.pick_centroid();
 
-        std::cout  << "CoresetTree: picked center = " << pickedIDX << "\n";
+        _cout << "CoresetTree: picked center = " << pickedIDX << "\n";
 
         leaf.split(pickedIDX);
-        std::cout  << "CoresetTree: leaf cost after split = " << leaf.cost << "\n";
-        std::cout  << "CoresetTree: leaf size after split = " << leaf.indices.size() << "\n";
-    
-    
-        auto ranges = root.get_leafs_ranges();
-        std::cout << "CoresetTree: leafs ranges: ";
-        for (const auto& range : ranges) {
-            // std::cout << "[" << range.first << ", " << range.second << "] ";
-            std::cout << range.second - range.first + 1 << " ";
-        }
-        std::cout << "\n";
+        _cout << "CoresetTree: leaf cost after split = " << leaf.cost << "\n";
+        _cout << "CoresetTree: leaf size after split = " << leaf.indices.size() << "\n";
     }
-
-
-    std::cout << "Tree cost: " << root.cost << "\n";
-
 
     return root;
 }

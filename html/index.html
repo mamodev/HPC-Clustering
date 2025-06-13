@@ -1,0 +1,56 @@
+<html>
+  <head>
+    <title>MPI visual</title>
+  </head>
+
+  <link rel="stylesheet" href="index.css" />
+
+  <body>
+    <div id="container"></div>
+  </body> 
+
+  
+  <script>
+
+    const process = 14;
+    const TSEND = 100;
+    const COMPUTE_SEND_RATIO = 1;
+    
+    const px_msg_size = 20;
+    const TCOMPUTE = TSEND * COMPUTE_SEND_RATIO;
+  
+    document.body.style.setProperty("--msg-size", `${px_msg_size}px`);
+    const container = document.getElementById("container");
+
+    async function do_work(mult = 1) {
+      let t = 0;
+      for (let m = 0; m < mult; m++) 
+        t += Math.random() * TCOMPUTE;
+
+      await new Promise(resolve => setTimeout(resolve, t));
+    }
+
+  </script>
+
+
+  <script  src="lib.js"></script>
+  <script  src="mpiv1.js"></script>]
+  <script  src="mpiv2.js"></script>
+
+  <script>
+    // mpiv1([
+    //   "master-send=sync",
+    //   "next-node-fn=random",
+    // ])
+
+    // mpiv1([
+    //   "master-send=async",
+    //   "next-node-fn=random",
+    // ])
+
+    mpiv2();
+
+  </script>
+
+  <script  src="index.js"></script>
+</html>

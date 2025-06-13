@@ -86,7 +86,9 @@ class DeltaTimer {
 
     // void start(const std::string& name) {
     std::function<void(void)> start(const std::string& name) {
-        deltas.push_back({std::chrono::high_resolution_clock::now(), {}, name});
+        deltas.push_back({std::chrono::high_resolution_clock::now(), 
+            std::chrono::high_resolution_clock::now()
+            , name});
 
         auto curr_pos = deltas.size() - 1;
 
@@ -113,4 +115,5 @@ class DeltaTimer {
             std::cerr << "Unable to open file: " << filename << std::endl;
         }
     }
+
 };
