@@ -4,7 +4,7 @@ window.addEventListener("focus", () => {
 
 function addUUID(promise, override = null) {
   const uuid = crypto.randomUUID();
-  
+
   return [
     uuid,
     new Promise((resolve, reject) => {
@@ -23,17 +23,16 @@ function addUUID(promise, override = null) {
 
 function observeStatus(promise) {
   let state = "pending"; // "pending" | "fulfilled" | "rejected"
-  const tracked = promise
-    .then(
-      (v) => {
-        state = "fulfilled";
-        return v;
-      },
-      (e) => {
-        state = "rejected";
-        throw e;
-      }
-    );
+  const tracked = promise.then(
+    (v) => {
+      state = "fulfilled";
+      return v;
+    },
+    (e) => {
+      state = "rejected";
+      throw e;
+    }
+  );
 
   return {
     promise: tracked,
@@ -56,93 +55,94 @@ document.createNode = function createNode(comm, idx) {
   return node;
 };
 
+async function message(node1Id, node2Id) {
+  if (TSEND < 5) return new Promise((resolve) => setTimeout(resolve, TSEND));
+
+  const n1r = document.getElementById(node1Id).getBoundingClientRect();
+  const n2r = document.getElementById(node2Id).getBoundingClientRect();
+  const crect = container.getBoundingClientRect();
+  if (!n1r || !n2r) return;
+
+  let px_msg_size = 0;
+  const startX = n1r.left + n1r.width / 2 - px_msg_size / 2 - crect.left;
+  const startY = n1r.top + n1r.height / 2 - px_msg_size / 2 - crect.top;
+  const endX = n2r.left + n2r.width / 2 - px_msg_size / 2 - crect.left;
+  const endY = n2r.top + n2r.height / 2 - px_msg_size / 2 - crect.top;
+
+  // crete a line from start to end
+  const l1 = document.createElement("div");
+  const l2 = document.createElement("div");
+
+  l1.position = "absolute";
+
+  const x1 = [startX, startY];
+  const x2 = [endX, endY];
+
+  const angle = Math.atan2(endY - startY, endX - startX);
+  const length = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
+
+  l1.style.width = `${length}px`;
+  l1.style.height = "6px"; // or any desired thickness
+  l1.style.backgroundColor = "red"; // or any desired color
+  l1.style.position = "absolute";
+  l1.style.left = `${startX}px`;
+  l1.style.top = `${startY}px`;
+  l1.style.transform = `rotate(${angle}rad)`;
+  l1.style.transformOrigin = "0 0"; // Set the transform origin to the start point
+  l1.style.transition = `transform ${TSEND}ms ease-in-out`;
+  l1.style.zIndex = "-1000"; // Ensure the line is on top
+  l1.style.opacity = "1"; // Start visible
+
+  l2.style.width = `${length * 0.8}px`;
+  l2.style.height = "6px"; // or any desired thickness
+  l2.style.backgroundColor = "BLUE"; // or any desired color
+  l2.style.position = "absolute";
+  l2.style.left = `${startX}px`;
+  l2.style.top = `${startY}px`;
+  l2.style.transform = `rotate(${angle}rad)`;
+  l2.style.transformOrigin = "0 0"; // Set the transform origin to the start point
+  l2.style.transition = `transform ${TSEND}ms ease-in-out`;
+  l2.style.zIndex = "-100"; // Ensure the line is on top
+  l2.style.opacity = "1"; // Start visible
+
+  container.appendChild(l1);
+  container.appendChild(l2);
+
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      l1.remove();
+      l2.remove();
+
+      resolve();
+    }, TSEND);
+  });
+}
+
+document.msg = message;
+
 document.init_comm_topology = function init_comm_topology(topology) {
   const process = topology.reduce((acc, val) => acc + val, 0);
 
   document.__ch = Array.from({ length: topology.length }, (_, i) => {
-    async function message(node1Id, node2Id) {
-      if (TSEND < 5)
-        return new Promise((resolve) => setTimeout(resolve, TSEND));
+    // const messageDot = document.createElement("div");
+    // messageDot.className = "message-dot";
+    // messageDot.style.setProperty("--start-x", `${startX}px`);
+    // messageDot.style.setProperty("--start-y", `${startY}px`);
+    // messageDot.style.setProperty("--end-x", `${endX}px`);
+    // messageDot.style.setProperty("--end-y", `${endY}px`);
+    // messageDot.style.animation = `messageTravel ${TSEND}ms forwards ease-in-out`;
+    // container.appendChild(messageDot);
 
-      const n1r = document.getElementById(node1Id).getBoundingClientRect();
-      const n2r = document.getElementById(node2Id).getBoundingClientRect();
-      const crect = container.getBoundingClientRect();
-      if (!n1r || !n2r) return;
-
-      let px_msg_size = 0;
-      const startX = n1r.left + n1r.width / 2 - px_msg_size / 2 - crect.left;
-      const startY = n1r.top + n1r.height / 2 - px_msg_size / 2 - crect.top;
-      const endX = n2r.left + n2r.width / 2 - px_msg_size / 2 - crect.left;
-      const endY = n2r.top + n2r.height / 2 - px_msg_size / 2 - crect.top;
-
-      // crete a line from start to end
-      const l1 = document.createElement("div");
-      const l2 = document.createElement("div");
-
-      l1.position = "absolute";
-
-      const x1 = [startX, startY];
-      const x2 = [endX, endY];
-
-      const angle = Math.atan2(endY - startY, endX - startX);
-      const length = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
-
-      l1.style.width = `${length}px`;
-      l1.style.height = "6px"; // or any desired thickness
-      l1.style.backgroundColor = "red"; // or any desired color
-      l1.style.position = "absolute";
-      l1.style.left = `${startX}px`;
-      l1.style.top = `${startY}px`;
-      l1.style.transform = `rotate(${angle}rad)`;
-      l1.style.transformOrigin = "0 0"; // Set the transform origin to the start point
-      l1.style.transition = `transform ${TSEND}ms ease-in-out`;
-      l1.style.zIndex = "-1000"; // Ensure the line is on top
-      l1.style.opacity = "1"; // Start visible
-
-      l2.style.width = `${length * 0.8}px`;
-      l2.style.height = "6px"; // or any desired thickness
-      l2.style.backgroundColor = "BLUE"; // or any desired color
-      l2.style.position = "absolute";
-      l2.style.left = `${startX}px`;
-      l2.style.top = `${startY}px`;
-      l2.style.transform = `rotate(${angle}rad)`;
-      l2.style.transformOrigin = "0 0"; // Set the transform origin to the start point
-      l2.style.transition = `transform ${TSEND}ms ease-in-out`;
-      l2.style.zIndex = "-100"; // Ensure the line is on top
-      l2.style.opacity = "1"; // Start visible
-
-      container.appendChild(l1);
-      container.appendChild(l2);
-
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          l1.remove();
-          l2.remove();
-
-          resolve();
-        }, TSEND);
-      });
-
-      // const messageDot = document.createElement("div");
-      // messageDot.className = "message-dot";
-      // messageDot.style.setProperty("--start-x", `${startX}px`);
-      // messageDot.style.setProperty("--start-y", `${startY}px`);
-      // messageDot.style.setProperty("--end-x", `${endX}px`);
-      // messageDot.style.setProperty("--end-y", `${endY}px`);
-      // messageDot.style.animation = `messageTravel ${TSEND}ms forwards ease-in-out`;
-      // container.appendChild(messageDot);
-
-      // return new Promise((resolve) => {
-      //   messageDot.addEventListener(
-      //     "animationend",
-      //     () => {
-      //       messageDot.remove();
-      //       resolve();
-      //     },
-      //     { once: true }
-      //   );
-      // });
-    }
+    // return new Promise((resolve) => {
+    //   messageDot.addEventListener(
+    //     "animationend",
+    //     () => {
+    //       messageDot.remove();
+    //       resolve();
+    //     },
+    //     { once: true }
+    //   );
+    // });
 
     return Array.from({ length: topology[i] }, (_, j) => {
       const channel = {

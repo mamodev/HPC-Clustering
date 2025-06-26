@@ -1,4 +1,4 @@
-<html>
+<html lang="en">
   <head>
     <title>MPI visual</title>
   </head>
@@ -7,35 +7,37 @@
 
   <body>
     <div id="container"></div>
-  </body> 
+  </body>
 
-  
   <script>
-
     const process = 14;
     const TSEND = 100;
     const COMPUTE_SEND_RATIO = 1;
-    
+
     const px_msg_size = 20;
     const TCOMPUTE = TSEND * COMPUTE_SEND_RATIO;
-  
+
     document.body.style.setProperty("--msg-size", `${px_msg_size}px`);
     const container = document.getElementById("container");
 
     async function do_work(mult = 1) {
       let t = 0;
-      for (let m = 0; m < mult; m++) 
-        t += Math.random() * TCOMPUTE;
+      for (let m = 0; m < mult; m++) t += Math.random() * TCOMPUTE;
 
-      await new Promise(resolve => setTimeout(resolve, t));
+      await new Promise((resolve) => setTimeout(resolve, t));
     }
 
+    async function noop_cost() {
+      // do nothing
+      await new Promise((resolve) => setTimeout(resolve, TSEND / 10));
+    }
   </script>
 
+  <script src="lib.js"></script>
+  <script src="mpiv1.js"></script>
 
-  <script  src="lib.js"></script>
-  <script  src="mpiv1.js"></script>]
-  <script  src="mpiv2.js"></script>
+  <script src="mpiv2.js"></script>
+  <script src="serial.js"></script>
 
   <script>
     // mpiv1([
@@ -48,9 +50,10 @@
     //   "next-node-fn=random",
     // ])
 
-    mpiv2();
+    //mpiv2();
 
+    serial();
   </script>
 
-  <script  src="index.js"></script>
+  <script src="index.js"></script>
 </html>
