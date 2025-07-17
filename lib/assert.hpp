@@ -11,10 +11,10 @@
 
 #if __has_include(<stacktrace>)
 #  include <stacktrace>
-   constexpr bool stacktrace_available = true;
+#  define stacktrace() std::stacktrace::current()
 #else
 #  pragma message("warning: <stacktrace> not available — stack dumps will be disabled")
-   constexpr bool stacktrace_available = false;
+#  define stacktrace() "<stacktrace not available>"
 #endif
 
 
@@ -55,10 +55,8 @@ struct Assert {
             std::cerr << "\t In function: " << location.function_name() << "\n";
             std::cerr << "\t at " << location.file_name() << ":" << location.line() << "\n" << std::endl;
 
-            if constexpr (stacktrace_available) {
-                std::cerr << "Stack trace:\n";
-                std::cout << std::stacktrace::current() << '\n' << std::endl;
-            }
+            std::cerr << "Stack trace:\n";
+            std::cout << stacktrace() << "\n";
 
             if (__assert_context.size() > 0) {
                 std::cerr << "Context:\n";
