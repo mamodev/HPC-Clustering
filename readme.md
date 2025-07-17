@@ -38,3 +38,10 @@ sudo cpupower -c 0 frequency-set -f 3900MHz
 
 sudo cpupower set --epp performance
 sudo cpupower frequency-set -g performance
+
+
+[m.morozzi@spmln HPC-Clustering]$ srun --mpi=pmix \
+     -N 3 \
+     -n 3 \
+     --time=00:00:20 \
+     ./build/mpi-v4 .data/blobs104/data.bin ../tmp
