@@ -9,17 +9,18 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 find_package(MPI REQUIRED)
 find_package(OpenMP REQUIRED)
 
-find_library(mpiP mpiP)
-if(NOT mpiP)
-    message(FATAL_ERROR "mpiP not found! Please install mpiP.")
+find_library(mpiP NAMES mpiP)
+if(mpiP)
+    message(STATUS "Found mpiP: ${mpiP}")
+    get_filename_component(MPIP_DIR ${mpiP} DIRECTORY)
+    get_filename_component(MPIP_DIR ${MPIP_DIR} DIRECTORY)
+    message(STATUS "mpiP directory: ${MPIP_DIR}")
+    include_directories(${MPIP_DIR}/include)
+    link_directories(${MPIP_DIR}/lib)
+else()
+    message(STATUS "mpiP not found. Skipping mpiP-enabled builds.")
 endif()
 
-message(STATUS "Found mpiP: ${mpiP}")
-get_filename_component(MPIP_DIR ${mpiP} DIRECTORY)
-get_filename_component(MPIP_DIR ${MPIP_DIR} DIRECTORY)
-message(STATUS "mpiP directory: ${MPIP_DIR}")
-include_directories(${MPIP_DIR}/include)
-link_directories(${MPIP_DIR}/lib)
 
 # Find Python and Pybind11
 find_package(pybind11 REQUIRED)  # or `add_subdirectory(pybind11)`
@@ -38,6 +39,7 @@ foreach(MAIN_SRC ${MAIN_SOURCES})
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
     target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
 
+<<<<<<< HEAD
 
 
 

@@ -1,4 +1,3 @@
-
 html {
   background-color: black;
 }
@@ -16,22 +15,23 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: row;
-  box-sizing: border-box;;
+  box-sizing: border-box;
 }
 
 .node {
-    font-family: monospace;
-    line-height: 1em;
-    font-size: 1.5em;
-    font-weight: bold;
-    border: 4px solid;
-    border-color: rgba(255, 255, 255, 0.5);
-    background-color: grey;
-    min-width: 100px;
-    text-align: center;
-    /* // node.style.backgroundColor = `hsl(${(index * 360) / (communicators + 2)}, 100%, 70%)`; */
+  margin: 8px;
+  padding: 8px;
+  font-family: monospace;
+  line-height: 1em;
+  font-size: 1.5em;
+  font-weight: bold;
+  border: 4px solid;
+  border-color: rgba(255, 255, 255, 0.5);
+  background-color: grey;
+  min-width: 100px;
+  text-align: center;
+  /* // node.style.backgroundColor = `hsl(${(index * 360) / (communicators + 2)}, 100%, 70%)`; */
 }
-
 
 .message-dot {
   position: absolute;
