@@ -34,13 +34,12 @@ public:
           if (count == 0) {
                return std::vector<float>();
           }
-          this->buff.resize(count);
+          this->buff.resize(count); // Resize to the actual received size
 
           MPI_Irecv(new_buff.data(), (coreset_size * 2) * features, MPI_FLOAT, source_rank, 0, MPI_COMM_WORLD, &request);
 
           std::swap(buff, new_buff);
-
-          return std::move(new_buff);
+          return std::move(new_buff); // RETURN THE OLD BUFFER THAT NOW IS IN NEW_BUFF
      }
 
 };
@@ -52,6 +51,10 @@ int main(int argc, char** argv) {
     int world_size, world_rank;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+
+     if (world_rank == 0) {
+        std::cout << "Running with " << world_size << " processes." << std::endl;
+     }
 
     if (world_size < 2) {
         std::cerr << "This application requires at least two processes." << std::endl;
