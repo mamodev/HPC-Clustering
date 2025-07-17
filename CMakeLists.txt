@@ -21,6 +21,15 @@ else()
     message(STATUS "mpiP not found. Skipping mpiP-enabled builds.")
 endif()
 
+find_library(STDCXXEXP_LIBRARY NAMES stdc++exp)
+if(STDCXXEXP_LIBRARY)
+    message(STATUS "Found stdc++exp library: ${STDCXXEXP_LIBRARY}")
+    set(LINK_STDCXXEXP_FLAG ON)
+else()
+    message(STATUS "stdc++exp library not found. Disabling linking against it.")
+    set(LINK_STDCXXEXP_FLAG OFF)
+endif()
+
 
 # Find Python and Pybind11
 find_package(pybind11 QUIET)  # or `add_subdirectory(pybind11)`
@@ -33,58 +42,59 @@ endif()
 
 set(LIB_DIR ${CMAKE_SOURCE_DIR}/lib)
 file(GLOB MAIN_SOURCES RELATIVE ${CMAKE_SOURCE_DIR} src/*/main.cpp)
+set(COMMON_BASE_LIBS MPI::MPI_CXX OpenMP::OpenMP_CXX)
+if (LINK_STDCXXEXP_FLAG)
+    list(APPEND COMMON_BASE_LIBS stdc++exp)
+endif()
+
+if (pybind11_FOUND)
+    list(APPEND COMMON_BASE_LIBS pybind11::embed)
+endif()
+
 foreach(MAIN_SRC ${MAIN_SOURCES})
     get_filename_component(VERSION_DIR ${MAIN_SRC} DIRECTORY)
     get_filename_component(VERSION_NAME ${VERSION_DIR} NAME)
-
     set(EXECUTABLE_NAME "${VERSION_NAME}")
+
+
     add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
-    target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX  OpenMP::OpenMP_CXX stdc++exp)
-    target_compile_options(${EXECUTABLE_NAME} PRIVATE -g -Ofast -funroll-loops -ffast-math -ffp-contract=fast -march=native)
-    # target_compile_options(${EXECUTABLE_NAME} PRIVATE -g -O3 -fno-omit-frame-pointer  -funroll-loops -ffast-math -ffp-contract=fast -march=native)
+    target_link_libraries(${EXECUTABLE_NAME} ${COMMON_BASE_LIBS})
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
     target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
-    if (pybind11_FOUND)
-        target_link_libraries(${EXECUTABLE_NAME} pybind11::embed)
-    endif()
 
+    target_compile_options(${EXECUTABLE_NAME} PRIVATE -g -Ofast -funroll-loops -ffast-math -ffp-contract=fast -march=native)
+    # target_compile_options(${EXECUTABLE_NAME} PRIVATE -g -O3 -fno-omit-frame-pointer  -funroll-loops -ffast-math -ffp-contract=fast -march=native)
 
     if (mpiP)
         set(EXECUTABLE_NAME "${VERSION_NAME}-mpip")
         add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
-        target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX mpiP stdc++exp)
-        target_compile_options(${EXECUTABLE_NAME} PRIVATE -O3  -funroll-loops -ffast-math -ffp-contract=fast -march=native)
         target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
         target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
-        if (pybind11_FOUND)
-            target_link_libraries(${EXECUTABLE_NAME} pybind11::embed)
-        endif()
+        target_link_libraries(${EXECUTABLE_NAME} ${COMMON_BASE_LIBS})
+
+        target_link_libraries(${EXECUTABLE_NAME} ${mpiP})
+        target_compile_options(${EXECUTABLE_NAME} PRIVATE -O3  -funroll-loops -ffast-math -ffp-contract=fast -march=native)
     endif()
 
 
     set(EXECUTABLE_NAME "${VERSION_NAME}-perf")
     add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
-    target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX stdc++exp)
+    target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
+    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
+    target_link_libraries(${EXECUTABLE_NAME} ${COMMON_BASE_LIBS})
+
     # disable inlining and optimizations for performance analysis
     target_compile_options(${EXECUTABLE_NAME} PRIVATE -O1 -g 
         -fno-omit-frame-pointer     
         -fno-inline -fno-inline-small-functions -fno-inline-functions -fno-inline-functions-called-once
         -ffast-math -ffp-contract=fast -march=native)
         
-    target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
-    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
-    if (pybind11_FOUND)
-        target_link_libraries(${EXECUTABLE_NAME} pybind11::embed)
-    endif()
-
 
     set(EXECUTABLE_NAME "${VERSION_NAME}-asserts")
     add_executable(${EXECUTABLE_NAME} ${MAIN_SRC}) 
-    target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX stdc++exp)
-    target_compile_options(${EXECUTABLE_NAME} PRIVATE -O2  -g  -ffast-math -ffp-contract=fast -march=native)
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
-    if (pybind11_FOUND)
-        target_link_libraries(${EXECUTABLE_NAME} pybind11::embed)
-    endif()
+    target_link_libraries(${EXECUTABLE_NAME} ${COMMON_BASE_LIBS})
+
+    target_compile_options(${EXECUTABLE_NAME} PRIVATE -O2  -g  -ffast-math -ffp-contract=fast -march=native)
 
 endforeach()
