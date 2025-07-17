@@ -39,10 +39,6 @@ foreach(MAIN_SRC ${MAIN_SOURCES})
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
     target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
 
-<<<<<<< HEAD
-
-
-
     set(EXECUTABLE_NAME "${VERSION_NAME}-mpip")
     add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
     target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX mpiP stdc++exp)
