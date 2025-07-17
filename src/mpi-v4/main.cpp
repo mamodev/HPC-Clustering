@@ -36,6 +36,8 @@ public:
           }
           this->buff.resize(count); // Resize to the actual received size
 
+          std::cout << "Rank " << source_rank << " received batch of size: " << count << std::endl;
+
           MPI_Irecv(new_buff.data(), (coreset_size * 2) * features, MPI_FLOAT, source_rank, 0, MPI_COMM_WORLD, &request);
 
           std::swap(buff, new_buff);
@@ -76,6 +78,8 @@ int main(int argc, char** argv) {
                if (batch.empty()) {
                     break;
                }
+
+               std::cout << "Rank 0 sending batch of size: " << batch.size() << std::endl;
 
                MPI_Send(batch.data(), batch.size(), MPI_FLOAT, next_rank + 1, 0, MPI_COMM_WORLD);
                next_rank = (next_rank + 1) % (world_size - 1); // Send to the next rank, skipping rank 0
