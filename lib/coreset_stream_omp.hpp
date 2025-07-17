@@ -21,7 +21,7 @@ std::vector<float> coresetStreamOmp(CoresetStream& stream) {
 
             #pragma omp critical(bucket_lock)
             {
-                for (int rank = buckets.size() - 1; rank >= 0; --rank) {
+                for (int rank = buckets.size() - 1; rank > 0; --rank) {
                     if (buckets[rank].size() >= 2) {
                         c1 = std::move(buckets[rank].back());
                         buckets[rank].pop_back();
@@ -39,12 +39,13 @@ std::vector<float> coresetStreamOmp(CoresetStream& stream) {
                     c1 = std::move(stream.next_batch());
                 }
 
+                task_rank = 0; 
                 if (c1.empty()) break; 
             }
 
             // --- Phase 3: Execute the work (NO LOCKS HELD) ---
             std::vector<float> result_coreset;
-            if (task_rank == -1) { // New batch from stream
+            if (task_rank == 0) { // New batch from stream
                 result_coreset = Coreset<int_t, false, MinSplitIters, Seed>(
                     c1.data(), c1.size() / stream.features,
                     stream.features, stream.coreset_size
@@ -57,20 +58,21 @@ std::vector<float> coresetStreamOmp(CoresetStream& stream) {
                 );
             }
 
+            task_rank++;
+
             // --- Phase 4: Store the result ---
             #pragma omp critical(bucket_lock)
             {
-                size_t result_rank = (task_rank == -1) ? 0 : task_rank + 1;
-                if (buckets.size() <= result_rank) {
-                    buckets.resize(result_rank + 1);
-                }
-                buckets[result_rank].push_back(std::move(result_coreset));
+                if (buckets.size() <= task_rank) 
+                    buckets.resize(task_rank + 1);
+
+                buckets[task_rank].push_back(std::move(result_coreset));
             }
         } // End of while loop
     } // End of parallel region (implicit barrier)
 
 
-    fassert(buckets[0].size() == 0, "Bucket 0 should be empty at the end of processing");
+    fassert(buckets[0].size() == 0, "Bucket 0 should be empty at the end of processing, instead it has " + std::to_string(buckets[0].size()) + " coresets");    
 
     // reduce all coresets in buckets[1]
     for (int rank = 2; rank < buckets.size(); ++rank) {
