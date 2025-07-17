@@ -23,7 +23,13 @@ endif()
 
 
 # Find Python and Pybind11
-find_package(pybind11 REQUIRED)  # or `add_subdirectory(pybind11)`
+find_package(pybind11 QUIET)  # or `add_subdirectory(pybind11)`
+if (pybind11_FOUND)
+    message(STATUS "Found pybind11: ${pybind11_DIR}")
+else()
+    message(STATUS "pybind11 not found. Disabling Python embedding.")
+endif()
+
 
 set(LIB_DIR ${CMAKE_SOURCE_DIR}/lib)
 file(GLOB MAIN_SOURCES RELATIVE ${CMAKE_SOURCE_DIR} src/*/main.cpp)
@@ -33,18 +39,28 @@ foreach(MAIN_SRC ${MAIN_SOURCES})
 
     set(EXECUTABLE_NAME "${VERSION_NAME}")
     add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
-    target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX  OpenMP::OpenMP_CXX stdc++exp pybind11::embed)
+    target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX  OpenMP::OpenMP_CXX stdc++exp)
     target_compile_options(${EXECUTABLE_NAME} PRIVATE -g -Ofast -funroll-loops -ffast-math -ffp-contract=fast -march=native)
     # target_compile_options(${EXECUTABLE_NAME} PRIVATE -g -O3 -fno-omit-frame-pointer  -funroll-loops -ffast-math -ffp-contract=fast -march=native)
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
     target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
+    if (pybind11_FOUND)
+        target_link_libraries(${EXECUTABLE_NAME} pybind11::embed)
+    endif()
 
-    set(EXECUTABLE_NAME "${VERSION_NAME}-mpip")
-    add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
-    target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX mpiP stdc++exp)
-    target_compile_options(${EXECUTABLE_NAME} PRIVATE -O3  -funroll-loops -ffast-math -ffp-contract=fast -march=native)
-    target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
-    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
+
+    if (mpiP)
+        set(EXECUTABLE_NAME "${VERSION_NAME}-mpip")
+        add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
+        target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX mpiP stdc++exp)
+        target_compile_options(${EXECUTABLE_NAME} PRIVATE -O3  -funroll-loops -ffast-math -ffp-contract=fast -march=native)
+        target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
+        target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
+        if (pybind11_FOUND)
+            target_link_libraries(${EXECUTABLE_NAME} pybind11::embed)
+        endif()
+    endif()
+
 
     set(EXECUTABLE_NAME "${VERSION_NAME}-perf")
     add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
@@ -57,6 +73,9 @@ foreach(MAIN_SRC ${MAIN_SOURCES})
         
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
     target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
+    if (pybind11_FOUND)
+        target_link_libraries(${EXECUTABLE_NAME} pybind11::embed)
+    endif()
 
 
     set(EXECUTABLE_NAME "${VERSION_NAME}-asserts")
@@ -64,5 +83,8 @@ foreach(MAIN_SRC ${MAIN_SOURCES})
     target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX stdc++exp)
     target_compile_options(${EXECUTABLE_NAME} PRIVATE -O2  -g  -ffast-math -ffp-contract=fast -march=native)
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
+    if (pybind11_FOUND)
+        target_link_libraries(${EXECUTABLE_NAME} pybind11::embed)
+    endif()
 
 endforeach()
