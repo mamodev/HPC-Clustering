@@ -13,254 +13,126 @@
 #include "assert.hpp"
 #include "parser.hpp"
 
-template<typename int_t = std::size_t>
-void Coreset(float * const __restrict__ __points,  const int_t N, const int_t D, const int_t K) {
+// #define USE_PYTHON_PLOT
+#include "coreset.hpp"
 
-    // =============== [Types and constants] ================
-    constexpr int_t NoneIDX = std::numeric_limits<int_t>::max();
-    struct leaf_t { int_t centroid_idx, start, end; float cost; };
+#include <cstdlib>
 
-    // =============== [Global variables] ================
-
-    std::vector<uint64_t> u_deltas;
-    const auto points = std::span<float>(__points, N);
-    
-    float* const __restrict__ __distances = new float[N];
-    const auto distances = std::span<float>(__distances, N);
-
-    float leaf_cost_total = 0.0;
-    std::vector<leaf_t> leafs;
-    leafs.reserve(K);
-
-    auto rng = std::mt19937();
-    auto fdistr = std::uniform_real_distribution<float>(0.0, 1.0);
-   
-    // =============== [Initialization] ================
-    {
-        // auto dist = std::uniform_int_distribution<uint32_t>(0, N - 1);
-        // uint32_t idx = dist(rng);
-        int_t idx = 1234;
-
-    
-        float cost = 0.0;
-        for (uint32_t i = 0; i < N; ++i) {
-            float c = 0.0;
-            for (uint32_t j = 0; j < D; ++j) {
-                c += (points[i * D + j] - points[idx * D + j]) * 
-                      (points[i * D + j] - points[idx * D + j]);
-            }
-
-            distances[i] = c;
-            cost += c;
-        }
-
-
-        leafs.emplace_back(
-            leaf_t{idx, 0, N - 1, cost}
-        );
-
-        leaf_cost_total = cost;
-    }
-    
-    while (leafs.size() < K) {
-        // std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-        // std::cout << "Leafs: " << leafs.size() << " | Treecost: " << leaf_cost_total << std::endl;
-
-        auto r = fdistr(rng) * leaf_cost_total;
-        float acc = 0.0;
-        int_t leaf_idx = 0;
-        while (leaf_idx < leafs.size()) {
-            acc += leafs[leaf_idx].cost;
-            if (acc >= r) break;
-        }
-
-        std::cout << "Picking leaf idx = " << leaf_idx << " with cost = "  << leafs[leaf_idx].cost << ", total cost = " << leaf_cost_total 
-                    << ", cidx = " << leafs[leaf_idx].centroid_idx << std::endl;
-
-        auto& leaf = leafs[leaf_idx];
-        const auto L_N = leaf.end - leaf.start + 1;
-
-        
-        // 2. Pick the farthest point from the centroid of the leaf
-        int_t point_idx = 0;
-        float minC1 = leaf.cost, minC2 = leaf.cost;
-        std::vector<int_t> new_points_idx = std::vector<int_t>();
-
-
-        for (int _rr = 0; _rr < 100; ++_rr) {
-            float c2 = 0.0, c1 = 0.0;
-        
-            // print some deboub info like cost of the leaf, minCostPoint, MaxCostPoint, avg, and var2
-            // std::cout << "Leaf[" << leaf.centroid_idx << "]: Cost = " << leaf.cost << ", Points = " << L_N; 
-            // float minCostPoint = std::numeric_limits<float>::max();
-            // float maxCostPoint = std::numeric_limits<float>::min();
-            // float avgCostPoint = 0.0;
-            // float var2CostPoint = 0.0;
-            // for (int_t i = leaf.start; i <= leaf.end; ++i) {
-            //     const float cost = distances[i];
-            //     if (cost < minCostPoint) {
-            //         minCostPoint = cost;
-            //     }
-            //     if (cost > maxCostPoint) {
-            //         maxCostPoint = cost;
-            //     }
-            //     avgCostPoint += cost;
-            // }
-            // avgCostPoint /= L_N;
-            // for (int_t i = leaf.start; i <= leaf.end; ++i) {
-            //     const float cost = distances[i];
-            //     var2CostPoint += (cost - avgCostPoint) * (cost - avgCostPoint);
-            // }
-            // var2CostPoint /= L_N;
-            // std::cout << "\n\tMinCostPoint = " << minCostPoint 
-            //           << ", MaxCostPoint = " << maxCostPoint 
-            //           << ", AvgCostPoint = " << avgCostPoint 
-            //           << ", Var2CostPoint = " << var2CostPoint 
-            //           << ", STD = " << std::sqrt(var2CostPoint)
-            //           << std::endl;
-
-            int_t pidx = ({
-                    float r = fdistr(rng) * leaf.cost;
-                    // std::cout << "Picking point with r = " << r << " | ";
-                    float cost_sum = 0.0;
-                    int_t pidx = 0;
-
-                    for (int_t i = leaf.start; i <= leaf.end; ++i) {
-                        cost_sum += distances[i];
-                        if (cost_sum >= r) {
-                            pidx = i;
-                            break;
-                        }
-                    }
-                    // std::cout << "Picked point idx = " << pidx << " with cost = " << distances[pidx] << std::endl;
-                    pidx;
-                });
-
-
-            // std::cout << "Leaf[" << leaf.centroid_idx << "]: Picking point idx = " << pidx <<  " cost = " << distances[pidx] << " | ";
-            // for (int_t i = 0; i < std::min(static_cast<int_t>(10),  D); ++i) {
-            //     std::cout << points[pidx * D + i] << " ";
-            // }
-
-            // if (D > 10) {
-            //     std::cout << "... ";
-            // }
-
-            // std::cout << std::endl << std::endl;
-
-            // 3. Compute the new distances based on the min(distances, new_distance)
-            // const float* const __restrict__ new_centroid = &points[pidx * D];
-            float * new_centroid = &points[pidx * D];
-
-            std::vector<int_t> swp_idx;
-            swp_idx.reserve(L_N);
-
-            for (int_t i = leaf.start; i <= leaf.end; ++i) {
-                float new_distance = 0.0;
-
-                for (int_t j = 0; j < D; ++j) {
-                    const float diff = points[i * D + j] - new_centroid[j];
-                    new_distance += diff * diff;
-                }
-
-
-                if (new_distance < distances[i]) {
-                    swp_idx.push_back(i);
-                    c2 += new_distance;
-                } else {
-                    c1 += distances[i];
-                }
-                
-            }
-
-            // std::cout << "curr min: " << (minC1 + minC2) << ", new: " << (c1 + c2) << std::endl;
-
-            if (c1 + c2 < minC1 + minC2) {
-                assert(swp_idx.size() > 0 && "Swp index should not be empty, how can cost be lower and no points move?");
-
-                minC1 = c1;
-                minC2 = c2;
-                point_idx = pidx;
-                new_points_idx = std::move(swp_idx);
-            } 
-        }
-
-        fassert(minC1 + minC2 < leaf.cost, "New cost should be lower than the current cost");
-
-        // udpate distances (loop through new_points_idx)
-        for (const auto& idx : new_points_idx) {
-            float new_distance = 0.0;
-            for (int_t j = 0; j < D; ++j) {
-                const float diff = points[idx * D + j] - points[point_idx * D + j];
-                new_distance += diff * diff;
-            }
-            distances[idx] = new_distance;
-        }
-
-
-        std::cout << "Coreset: New point idx = " << point_idx
-                  << ", c1 = " << minC1 << ", c2 = " << minC2 
-                  << ", new_points_idx.size() = " << new_points_idx.size() 
-                  << std::endl;
-
-
-        const int_t s1 = leaf.start, e1 = leaf.end - new_points_idx.size(), s2 = e1 + 1, e2 = leaf.end;
-        int_t cur = e2;
-        int_t i = new_points_idx.size() - 1;
-        while (i != std::numeric_limits<int_t>::max()) {
-            int_t idx = new_points_idx[i];
-            i--;
-
-            for (int_t j = 0; j < D; ++j) {
-                std::swap(points[cur * D + j], points[idx * D + j]);
-            }
-
-            std::swap(distances[cur], distances[idx]);
-            cur--;
-        }
-
-
-        leaf_cost_total -= leaf.cost;
-        leaf_cost_total += minC1 + minC2;
-
-        // UPD PRV LEAF 
-        leaf.start = s1;
-        leaf.end = e1;
-        leaf.cost = minC1;
-        leafs.emplace_back(leaf_t{point_idx, s2, e2, minC2});
-
-
-
-        // print all ranges of leafs (debugging)
-        // if (leafs.size() < 10) {
-            std::cout << "Leafs: " << leafs.size() << " | ";
-            // if (leafs.size() < 10) {
-                for (const auto& l : leafs) {
-                    // std::cout << "[" << l.start << ", " << l.end << "] ";
-                    std::cout << l.end - l.start + 1 << "(" << l.cost << ") ";
-                }
-            // }
-          
-            std::cout << std::endl;
-        // }
-    }
-
-    delete[] __distances;
-}
 
 int main(int argc, char** argv) {
+
+    auto plotter = CoresetPlotter();
+
     auto perf = PerfManager();
     perf.pause(); 
-    auto [samples, outDir, coreset_size] = parseArgs<float>(argc, argv);
 
-    if (coreset_size == 0) {
-        coreset_size = samples.samples / 2;
-    }
+    MemoryStream stream(argc, argv);
+
+    // auto [samples, outDir, coreset_size] = parseArgs<float>(argc, argv);
+
+    // size_t batches = samples.samples / coreset_size;
+    // std::cout << "Coreset size: " << coreset_size << std::endl;
+    // std::cout << "Samples: " << samples.samples << std::endl;
+    // std::cout << "Features: " << samples.features << std::endl;
+    // std::cout << "Batches: " << batches << std::endl;
+    
 
     perf.resume();
-    Coreset(samples.data.data(), static_cast<size_t>(600), samples.features, coreset_size);
-    perf.pause();
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    
+    auto final_coreset = std::vector<float>();
 
+    // for (int r = 0; r < 1; ++r) {
+
+    size_t computations_per_rank[100] = {0};
+    size_t computed = 0;
+
+    std::vector<std::vector<float>> buckets;
+
+    auto batch = stream.next_batch();
+    while(!batch.empty()) {
+
+
+        // std::cout << "batch size: " << batch_size << std::endl;
+
+        auto coreset = Coreset<size_t, false, 3, 3U>(batch.data(), batch.size() / stream.features, stream.features, stream.coreset_size);
+        computations_per_rank[0] += 1;
+        computed += 1;
+        // std::cout << "corest size: " << coreset.size() << std::endl;
+
+        size_t next = 0;
+        while(buckets.size() > next && !buckets[next].empty()) { // Use !buckets[next].empty() for clarity
+            // No more new/delete[] or manual loops!
+            std::vector<float>& bucket_coreset_vec = buckets[next]; // Get reference to the vector in bucket
+        
+            // Merge current_coreset_vec into bucket_coreset_vec (or vice-versa, depending on desired outcome)
+            // For simplicity, let's merge bucket_coreset_vec into current_coreset_vec:
+            coreset.insert(coreset.end(), bucket_coreset_vec.begin(), bucket_coreset_vec.end());
+        
+            size_t merged_n_points = coreset.size() / (stream.features + 1); // Assuming weights added
+        
+            coreset = std::move(
+                Coreset<size_t, true, 3, 3U>(coreset.data(), merged_n_points, stream.features, stream.coreset_size)
+            );
+            computed += 1;
+            computations_per_rank[next + 1] += 1;
+
+            
+            bucket_coreset_vec.clear(); // Mark bucket as empty
+            next++;
+        }
+
+        // while(buckets.size() > next && buckets[next].size() != 0) {
+
+        //     size_t points_merged_size = coreset.size() + buckets[next].size();
+        //     float *points_merged = new float[points_merged_size];
+        //     for (int i = 0; i < coreset.size(); ++i) points_merged[i] = coreset[i];
+        //     for (int i = 0; i < buckets[next].size(); ++i) points_merged[i + coreset.size()] = buckets[next][i];
+
+        //     size_t merged_n_points = points_merged_size / (stream.features + 1);
+
+        //     // std::cout << "Merging bucket " << next << " with size: " << buckets[next].size() << std::endl;
+        //     // std::cout << "mergin " << points_merged_size << std::endl;
+        //     coreset = std::move(
+        //         Coreset<size_t, true, 3, 3U>(points_merged, merged_n_points, stream.features, coreset_size)
+        //     );
+            
+        //     delete[] points_merged;
+        //     buckets[next] = std::vector<float>();
+        //     next++;
+        // }
+
+
+        if(next >= buckets.size()) {
+            buckets.push_back(std::move(coreset));
+        } else {
+            buckets[next] = std::move(coreset);
+        }
+
+        batch = stream.next_batch();
+        // plotter.plot(compute_final_coreset(buckets, stream.features, coreset_size), stream.features);
+    }   
+
+
+        for (int r = 0; r < buckets.size(); ++r) {
+            std::cout << " ," << computations_per_rank[r];
+        }
+        std::cout << std::endl;
+
+
+
+        // final_coreset = std::move(compute_final_coreset(buckets, stream.features, coreset_size)); 
+        // plotter.plot(final_coreset, stream.features);
+    // }
+
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    perf.pause();
+    std::cout << "Coreset computed in " << duration << " ms" << std::endl;
+    std::cout << "Computed " << computed << " coreset batches." << std::endl;
 
     return 0;
 }
+

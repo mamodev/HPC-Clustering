@@ -21,6 +21,63 @@ message(STATUS "mpiP directory: ${MPIP_DIR}")
 include_directories(${MPIP_DIR}/include)
 link_directories(${MPIP_DIR}/lib)
 
+# Find Python and Pybind11
+find_package(pybind11 REQUIRED)  # or `add_subdirectory(pybind11)`
+
+# execute_process(
+#     COMMAND python -c "from sysconfig import get_paths; print(get_paths()['include'])"
+#     OUTPUT_VARIABLE PYTHON_INCLUDE_DIR
+#     OUTPUT_STRIP_TRAILING_WHITESPACE
+#     RESULT_VARIABLE PYTHON_INCLUDE_DIR_RESULT
+# )
+# if(PYTHON_INCLUDE_DIR_RESULT)
+#     message(FATAL_ERROR "Failed to get Python include directory: ${PYTHON_INCLUDE_DIR}")
+# endif()
+# message(STATUS "Python Include Dir: ${PYTHON_INCLUDE_DIR}")
+
+# execute_process(
+#     COMMAND python -c "import sys; print(sys.base_exec_prefix)"
+#     OUTPUT_VARIABLE PYTHON_BASE_PREFIX
+#     OUTPUT_STRIP_TRAILING_WHITESPACE
+#     RESULT_VARIABLE PYTHON_BASE_PREFIX_RESULT
+# )
+# if(PYTHON_BASE_PREFIX_RESULT)
+#     message(FATAL_ERROR "Failed to get Python base prefix: ${PYTHON_BASE_PREFIX}")
+# endif()
+# # Manual adjustment for lib dir, as per your bash command
+# set(PYTHON_LIB_DIR "${PYTHON_BASE_PREFIX}/lib")
+# message(STATUS "Python Library Dir: ${PYTHON_LIB_DIR}")
+
+# execute_process(
+#     COMMAND python -c "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')"
+#     OUTPUT_VARIABLE PYTHON_VERSION_STRING
+#     OUTPUT_STRIP_TRAILING_WHITESPACE
+#     RESULT_VARIABLE PYTHON_VERSION_STRING_RESULT
+# )
+# if(PYTHON_VERSION_STRING_RESULT)
+#     message(FATAL_ERROR "Failed to get Python version string: ${PYTHON_VERSION_STRING}")
+# endif()
+# message(STATUS "Python Library Name: ${PYTHON_VERSION_STRING}")
+
+
+# execute_process(
+#     COMMAND python -c "import pybind11; print(pybind11.get_include())"
+#     OUTPUT_VARIABLE PYBIND11_INCLUDE_DIR
+#     OUTPUT_STRIP_TRAILING_WHITESPACE
+#     RESULT_VARIABLE PYBIND11_INCLUDE_DIR_RESULT
+# )
+# if(PYBIND11_INCLUDE_DIR_RESULT)
+#     message(FATAL_ERROR "Failed to get pybind11 include directory. Is pybind11 installed via pip?")
+# endif()
+
+# message(STATUS "Pybind11 Include Dir: ${PYBIND11_INCLUDE_DIR}")
+
+# include_directories(
+#     ${PYTHON_INCLUDE_DIR}
+#     ${PYBIND11_INCLUDE_DIR}
+# )
+
+# link_directories(${PYTHON_LIB_DIR})
 
 set(LIB_DIR ${CMAKE_SOURCE_DIR}/lib)
 file(GLOB MAIN_SOURCES RELATIVE ${CMAKE_SOURCE_DIR} src/*/main.cpp)
@@ -31,22 +88,36 @@ foreach(MAIN_SRC ${MAIN_SOURCES})
     set(EXECUTABLE_NAME "${VERSION_NAME}")
     add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
     # target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX OpenMP::OpenMP_CXX stdc++exp)
-    target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX stdc++exp)
-    target_compile_options(${EXECUTABLE_NAME} PRIVATE -O3 -fopenmp -funroll-loops -ffast-math -ffp-contract=fast -march=native)
+    # target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX stdc++exp ${PYTHON_VERSION_STRING})
+    target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX stdc++exp pybind11::embed)
+    target_compile_options(${EXECUTABLE_NAME} PRIVATE -g -Ofast -funroll-loops -ffast-math -ffp-contract=fast -march=native)
+    # target_compile_options(${EXECUTABLE_NAME} PRIVATE -g -O3 -fno-omit-frame-pointer  -funroll-loops -ffast-math -ffp-contract=fast -march=native)
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
     target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
+
+    # if (UNIX) # RPATH for Linux/macOS
+    #     target_link_options(${EXECUTABLE_NAME} PRIVATE
+    #         -Wl,-rpath,'$$ORIGIN',-rpath,'${PYTHON_LIB_DIR}'
+    #     )
+    # endif()
+
 
     set(EXECUTABLE_NAME "${VERSION_NAME}-mpip")
     add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
     target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX mpiP stdc++exp)
-    target_compile_options(${EXECUTABLE_NAME} PRIVATE -O3 -fopenmp -funroll-loops -ffast-math -ffp-contract=fast -march=native)
+    target_compile_options(${EXECUTABLE_NAME} PRIVATE -O3  -funroll-loops -ffast-math -ffp-contract=fast -march=native)
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
     target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
 
     set(EXECUTABLE_NAME "${VERSION_NAME}-perf")
     add_executable(${EXECUTABLE_NAME} ${MAIN_SRC})
     target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX stdc++exp)
-    target_compile_options(${EXECUTABLE_NAME} PRIVATE -O2 -fopenmp  -g -ffast-math -ffp-contract=fast -march=native)
+    # disable inlining and optimizations for performance analysis
+    target_compile_options(${EXECUTABLE_NAME} PRIVATE -O1 -g 
+        -fno-omit-frame-pointer     
+        -fno-inline -fno-inline-small-functions -fno-inline-functions -fno-inline-functions-called-once
+        -ffast-math -ffp-contract=fast -march=native)
+        
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
     target_compile_definitions(${EXECUTABLE_NAME} PRIVATE -DNDEBUG)
 
@@ -54,7 +125,7 @@ foreach(MAIN_SRC ${MAIN_SOURCES})
     set(EXECUTABLE_NAME "${VERSION_NAME}-asserts")
     add_executable(${EXECUTABLE_NAME} ${MAIN_SRC}) 
     target_link_libraries(${EXECUTABLE_NAME} MPI::MPI_CXX stdc++exp)
-    target_compile_options(${EXECUTABLE_NAME} PRIVATE -O2 -fopenmp -g  -ffast-math -ffp-contract=fast -march=native)
+    target_compile_options(${EXECUTABLE_NAME} PRIVATE -O2  -g  -ffast-math -ffp-contract=fast -march=native)
     target_include_directories(${EXECUTABLE_NAME} PRIVATE ${LIB_DIR})
 
 endforeach()
