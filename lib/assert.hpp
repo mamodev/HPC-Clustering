@@ -8,7 +8,7 @@
 #include <map>
 #include <string>
 
-#if __has_include(<stacktrace>)
+#if __has_include(<stacktrace>) and __cplusplus >= 202002L
 #  include <stacktrace>
 #  define stacktrace() std::stacktrace::current()
 #else
