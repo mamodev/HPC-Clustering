@@ -5,7 +5,6 @@
 
 #include <source_location>
 
-#include <stacktrace>
 #include <map>
 #include <string>
 
