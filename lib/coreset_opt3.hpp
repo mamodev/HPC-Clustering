@@ -171,7 +171,7 @@ std::vector<float> Coreset(float * const __restrict__ __points, const int_t N, c
 
         dassert(LeaftPointsSize >= 2, "Cannot split a leaf with < 2 points");
 
-        int_t SplitIters = std::min(static_cast<size_t>(MinSplitIters), LeaftPointsSize - 1);
+        int_t SplitIters = std::min(static_cast<int_t>(MinSplitIters), LeaftPointsSize - 1);
 
         auto split_centers = std::array<int_t, MinSplitIters>();
         auto probs = std::array<double, MinSplitIters>();

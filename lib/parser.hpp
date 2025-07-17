@@ -22,9 +22,6 @@ struct samples_t {
 template<Dtype T>
 using Samples = samples_t<T>;
 
-
-
-
 template<Dtype T>
 Samples<T> readSamples(const std::string &path) {
 
@@ -147,60 +144,56 @@ std::tuple<Samples<T>, std::string, size_t> parseArgs(int argc, char **argv) {
     return {readSamples<T>(inputFile), outputFile, coresetSize};
 }
 
-class MemoryStream {
+
+class CoresetStream {
+public:
+    size_t processed_batches;
+    size_t features;
+    size_t coreset_size;
+
+    CoresetStream(const CoresetStream&) = delete;
+    CoresetStream& operator=(const CoresetStream&) = delete;
+    CoresetStream(): features(0), coreset_size(0), processed_batches(0) {}
+
+    virtual ~CoresetStream() = default;
+    virtual std::vector<float> next_batch() = 0;
+};
+
+
+class MemoryStream : public CoresetStream {
 private:
     samples_t<float> samples;
     size_t index;
 
+public:
 
-    public:
-        size_t processed_batches;
-        size_t features;
-        size_t coreset_size;
+    MemoryStream(int argc, char** argv) : CoresetStream(), index(0) {
+        auto [samples, outDir, coreset_size] = parseArgs<float>(argc, argv);
+        this->samples = std::move(samples);
+        this->index = 0;
 
-        MemoryStream() = delete;
-        MemoryStream(const MemoryStream&) = delete;
-        MemoryStream& operator=(const MemoryStream&) = delete;
+        // Superclass initialization
+        this->coreset_size = coreset_size;
+        this->features = samples.features;
+        this->processed_batches = 0;
+    }
+   
+    std::vector<float> next_batch() {
+        processed_batches++;
 
-        MemoryStream(int argc, char** argv) {
-            auto [samples, outDir, coreset_size] = parseArgs<float>(argc, argv);
-            this->coreset_size = coreset_size;
-            this->samples = std::move(samples);
-            this->features = samples.features;
-            this->index = 0;
-            this->processed_batches = 0;
+        if (index >= samples.samples) {
+            return std::vector<float>(); 
         }
-
-        MemoryStream(samples_t<float> samples, size_t coreset_size)
-            : coreset_size(coreset_size), samples(std::move(samples)), index(0), processed_batches(0) {
-            if (samples.data.empty() || samples.features == 0) {
-                throw std::invalid_argument("Samples data is empty or features are not set");
-            }
-
-            if (coreset_size == 0) {
-                throw std::invalid_argument("Coreset size must be greater than 0");
-            }
-
-            this->features = samples.features;
-        }
-
-
-        std::vector<float> next_batch() {
-            processed_batches++;
-
-            if (index >= samples.samples) {
-                return std::vector<float>(); 
-            }
+    
+        const size_t target_batch_size = coreset_size * 2;
+        size_t batch_size = std::min(target_batch_size, samples.samples - index);
         
-            const size_t target_batch_size = coreset_size * 2;
-            size_t batch_size = std::min(target_batch_size, samples.samples - index);
-            
-            float *data_ptr = samples.data.data() + (index * samples.features);
-    
-            std::vector<float> batch(data_ptr, data_ptr + batch_size * samples.features);
-            
-            index += batch_size;
-    
-            return std::move(batch);
-        }
+        float *data_ptr = samples.data.data() + (index * samples.features);
+
+        std::vector<float> batch(data_ptr, data_ptr + batch_size * samples.features);
+        
+        index += batch_size;
+
+        return std::move(batch);
+    }
 };

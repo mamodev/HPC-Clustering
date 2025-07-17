@@ -1,6 +1,5 @@
 #pragma once
 
-
 // #include "coreset_naive.hpp"
 // #include "coreset_opt1.hpp"
 // #include "coreset_opt2.hpp"

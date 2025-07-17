@@ -1,11 +1,7 @@
 
 #include <thread>
 #include <iostream>
-#include <future>
-#include <variant>
 #include <vector> 
-
-// #define USE_PYTHON_PLOT
 
 #include "parser.hpp"
 #include "coreset.hpp"
