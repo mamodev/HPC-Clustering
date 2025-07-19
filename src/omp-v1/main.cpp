@@ -74,7 +74,10 @@ int main(int argc, char* argv[]) {
             if (cpu_topo.size() == 1 || node != 0) {
                 if (c1.empty()) {
                     c1 = std::move(stream.next_batch());
-                    if (c1.empty()) break; 
+                    if (c1.empty()) {
+                        done = true;
+                        break; 
+                    }
                 }
             } else {
                 if (done) {
@@ -113,7 +116,6 @@ int main(int argc, char* argv[]) {
         } // End of while loop
     } // End of parallel region (implicit barrier)
 
-    done = true; // Signal all threads to finish
 
     //std::cout << "Final bucket sizes:";
     //for (const auto& rank : buckets) {
