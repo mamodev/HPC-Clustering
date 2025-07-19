@@ -8,6 +8,7 @@
 #include "parser.hpp"
 #include "coreset.hpp"
 #include "perf.hpp"
+#include "topo.hpp"
 
     
 //    omp_set_num_threads(
@@ -21,9 +22,13 @@ int main(int argc, char* argv[]) {
     const size_t coreset_size = stream.coreset_size;
     const size_t features     = stream.features;
 
+    CpuTopo cpu_topo = detect_cpu_topology(true, true);
+    std::cout << "Detected CPU Topology:\n" << cpuTopoToString(cpu_topo) << std::endl;
+
     perf.resume();
     auto start = std::chrono::high_resolution_clock::now();
     
+    omp_set_num_threads(getCpuCount(cpu_topo));
 
     constexpr size_t MAX_BUCKETS = 20;
     // std::vector<std::vector<std::vector<float>>> buckets;
@@ -33,10 +38,14 @@ int main(int argc, char* argv[]) {
         omp_init_lock(&bucket_mutexes[i]);
     }
 
-
+    std::vector<size_t> thread_pin_map = flat_thread_pin_map(cpu_topo);
 
     #pragma omp parallel
     {
+        int tid = omp_get_thread_num();
+        size_t core = thread_pin_map[tid];
+        set_thread_affinity(core);
+
         bool stream_finished = false;
         while (true) {
             int task_rank = -1;
