@@ -194,7 +194,7 @@ int main(int argc, char* argv[]) {
         int local_tid = omp_get_thread_num();  // 0 > 64
         size_t cpu_id = local_tid * 2;
         if (group_id == 1) {
-            cpu_id + 128;
+            cpu_id += 128;
         }
 
         
