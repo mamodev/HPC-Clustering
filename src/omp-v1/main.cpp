@@ -212,7 +212,7 @@ int main(int argc, char* argv[]) {
         //     cpu_id = (*cores)[local_tid - core_offs];
         // }
 
-        set_thread_affinity(cpu_id);
+        // set_thread_affinity(cpu_id);
 
         bool isSink = (group_id == groups - 1);
 
