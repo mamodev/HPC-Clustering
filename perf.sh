@@ -41,12 +41,10 @@ echo "STARTING PERF RECORD"
 perf record \
     -g \
     --delay=-1 \
-    --event=task-clock,cycles,instructions,L1-dcache-loads,L1-dcache-load-misses,L1-icache-loads,L1-icache-load-misses,branches,branch-misses \
     --control fd:${perf_ctl_fd},${perf_ack_fd} \
+    --event=task-clock,cycles,instructions,L1-dcache-loads,L1-dcache-load-misses,L1-icache-loads,L1-icache-load-misses,branches,branch-misses \
     --output .outs/$1/$2/perf \
-    -- ./build/$1 .data/$2/data.bin .outs/$1/$2/
-
-    # -- taskset -c 5 ./build/$1-perf .data/$2/data.bin .outs/$1/$2/
+    -- ./build/$1-perf .data/$2/data.bin .outs/$1/$2/
 
 # exec {perf_ctl_fd}>&-
 # exec {perf_ack_fd}>&-
