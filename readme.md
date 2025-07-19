@@ -31,6 +31,25 @@ sudo cpupower frequency-info
 current boost status: cat /sys/devices/system/cpu/cpu0/cpufreq/boost
 
 sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu0/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu1/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu2/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu3/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu4/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu5/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu6/cpufreq/boost" 
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu7/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu8/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu9/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu10/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu11/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu12/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu13/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu14/cpufreq/boost"
+sudo sh -c "echo 0 > /sys/devices/system/cpu/cpu15/cpufreq/boost"
+
+
+sudo sh -c "echo 1 > /sys/devices/system/cpu/cpu0/cpufreq/boost"
+
 sudo cpupower -c 0 set --epp performance
 sudo cpupower -c 0 frequency-set -g performance
 sudo cpupower -c 0 frequency-set -f 3900MHz

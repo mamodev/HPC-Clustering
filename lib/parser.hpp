@@ -70,8 +70,60 @@ Samples<T> readSamples(const std::string &path) {
         throw std::runtime_error("Failed to read sample data");
     }
 
+    std::cout << "Read " << n << " samples with " << features
+              << " features each." << std::endl;
+
     return s;
 }
+
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstring>
+template<Dtype T>
+Samples<T> readSamplesMmap(const std::string &path) {
+    std::cout << "Reading samples from: " << path << std::endl;
+
+    int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) throw std::runtime_error("open failed");
+  
+    struct stat st;
+    ::fstat(fd, &st);
+    size_t size = st.st_size;
+  
+    void* p = ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (p == MAP_FAILED) throw std::runtime_error("mmap failed");
+  
+    char* cur = static_cast<char*>(p);
+  
+    // read dims
+    uint32_t dims = *reinterpret_cast<uint32_t*>(cur);
+    cur += sizeof(uint32_t);
+  
+    // read shape
+    std::vector<uint32_t> shape(dims);
+    std::memcpy(shape.data(), cur, dims * sizeof(uint32_t));
+    cur += dims * sizeof(uint32_t);
+  
+    uint32_t n = shape[0];
+    size_t features = 1;
+    for (uint32_t i = 1; i < dims; ++i)
+      features *= shape[i];
+  
+    Samples<T> s;
+    s.samples  = n;
+    s.features = features;
+    // Instead of copying, you could wrap cur in a view; if you must own a copy:
+    s.data.resize(n * features);
+    std::memcpy(s.data.data(), cur, n * features * sizeof(T));
+  
+    ::munmap(p, size);
+    ::close(fd);
+
+    std::cout << "Read " << n << " samples with " << features << " features each." << std::endl;
+    return s;
+  }
 
 void writeResults(const std::string &path, const std::vector<int> &labels) {
     std::ofstream file(path, std::ios::binary);
@@ -160,13 +212,15 @@ public:
 };
 
 
+template<bool ThreadSafe = false>
 class MemoryStream : public CoresetStream {
 private:
     samples_t<float> samples;
-    size_t index;
+
+    using IndexType = std::conditional_t<ThreadSafe, std::atomic<size_t>, size_t>;
+    IndexType index;
 
 public:
-
     MemoryStream(int argc, char** argv) : CoresetStream(), index(0) {
         auto [samples, outDir, coreset_size] = parseArgs<float>(argc, argv);
         this->samples = std::move(samples);
@@ -179,21 +233,30 @@ public:
     }
    
     std::vector<float> next_batch() {
-        processed_batches++;
-
-        if (index >= samples.samples) {
-            return std::vector<float>(); 
+        if constexpr (ThreadSafe) {
+            processed_batches++;
         }
-    
+
         const size_t target_batch_size = coreset_size * 2;
-        size_t batch_size = std::min(target_batch_size, samples.samples - index);
+
+        size_t start;
+        if constexpr (ThreadSafe) {
+            start = index.fetch_add(target_batch_size, std::memory_order_relaxed);
+        } else {
+            start = index;
+        }   
+
+        if (start >= samples.samples) {
+            return {};
+        }
+        
+
+        size_t batch_size = std::min(target_batch_size, samples.samples - start);
+        if constexpr (!ThreadSafe) {
+            index += batch_size;
+        }
         
         float *data_ptr = samples.data.data() + (index * samples.features);
-
-        std::vector<float> batch(data_ptr, data_ptr + batch_size * samples.features);
-        
-        index += batch_size;
-
-        return std::move(batch);
+        return std::vector<float>(data_ptr, data_ptr + batch_size * samples.features);
     }
 };

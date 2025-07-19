@@ -17,24 +17,13 @@
 int main(int argc, char* argv[]) {
     auto perf = PerfManager();
     perf.pause();
-    MemoryStream<true> stream(argc, argv);
+    MemoryStream<false> stream(argc, argv);
     const size_t coreset_size = stream.coreset_size;
     const size_t features     = stream.features;
 
     perf.resume();
     auto start = std::chrono::high_resolution_clock::now();
-    
-
-    constexpr size_t MAX_BUCKETS = 20;
-    // std::vector<std::vector<std::vector<float>>> buckets;
-    std::array<std::vector<std::vector<float>>, MAX_BUCKETS> buckets;
-    std::array<omp_lock_t, MAX_BUCKETS> bucket_mutexes;
-    for (size_t i = 0; i < MAX_BUCKETS; ++i) {
-        omp_init_lock(&bucket_mutexes[i]);
-    }
-
-
-
+    std::vector<std::vector<std::vector<float>>> buckets;
     #pragma omp parallel
     {
         bool stream_finished = false;
@@ -42,23 +31,28 @@ int main(int argc, char* argv[]) {
             int task_rank = -1;
             std::vector<float> c1, c2;
 
-            for (int rank = buckets.size() - 1; rank >= 0; --rank) {
-                omp_set_lock(&bucket_mutexes[rank]);
-                if (buckets[rank].size() >= 2) {
-                    c1 = std::move(buckets[rank].back());
-                    buckets[rank].pop_back();
-                    c2 = std::move(buckets[rank].back());
-                    buckets[rank].pop_back();
-                    task_rank = rank;
+            #pragma omp critical(bucket_lock)
+            {
+                for (int rank = buckets.size() - 1; rank >= 0; --rank) {
+                    if (buckets[rank].size() >= 2) {
+                        c1 = std::move(buckets[rank].back());
+                        buckets[rank].pop_back();
+                        c2 = std::move(buckets[rank].back());
+                        buckets[rank].pop_back();
+                        task_rank = rank;
+                        break;
+                    }
                 }
-                
-                omp_unset_lock(&bucket_mutexes[rank]);
-                if (task_rank != -1) break;
-            }
+            } 
 
             if (c1.empty() && !stream_finished) {
-                c1 = std::move(stream.next_batch());
+                #pragma omp critical(stream_lock)
+                {
+                    c1 = std::move(stream.next_batch());
+                }
+
                 if (c1.empty()) break; 
+
             }
 
             // --- Phase 3: Execute the work (NO LOCKS HELD) ---
@@ -76,12 +70,15 @@ int main(int argc, char* argv[]) {
                 );
             }
 
-            size_t result_rank = (task_rank == -1) ? 0 : task_rank + 1;
-            fassert(result_rank < MAX_BUCKETS, "Result rank exceeds bucket size");
-            
-            omp_set_lock(&bucket_mutexes[result_rank]);                    
-            buckets[result_rank].push_back(std::move(result_coreset));
-            omp_unset_lock(&bucket_mutexes[result_rank]);
+            // --- Phase 4: Store the result ---
+            #pragma omp critical(bucket_lock)
+            {
+                size_t result_rank = (task_rank == -1) ? 0 : task_rank + 1;
+                if (buckets.size() <= result_rank) {
+                    buckets.resize(result_rank + 1);
+                }
+                buckets[result_rank].push_back(std::move(result_coreset));
+            }
         } // End of while loop
     } // End of parallel region (implicit barrier)
 
