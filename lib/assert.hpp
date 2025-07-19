@@ -112,3 +112,11 @@ class fake_ostream {
 };
 
 #define _cout fake_ostream()
+
+#if defined(__GNUC__) || defined(__clang__)
+#define NO_INLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define NO_INLINE __declspec(noinline)
+#else
+#define NO_INLINE
+#endif

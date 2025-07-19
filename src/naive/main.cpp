@@ -2,6 +2,8 @@
 #include <thread>
 #include <iostream>
 #include <vector> 
+#include <mutex>
+#include <condition_variable>
 
 #include "parser.hpp"
 #include "coreset.hpp"
@@ -54,33 +56,41 @@ public:
         return {tmp_tag, std::move(res_)};
     }
 
+    NO_INLINE void local_notify() {
+        cv_.notify_all(); // Notify the worker thread
+    }
+
+    NO_INLINE void global_notify() {
+        if (global_cv_) {
+            global_cv_->notify_all(); 
+        }
+    }
+
     void postWork(int tag,  std::vector<float> c1,  std::vector<float> c2) {
         fassert(tag < 0 || !c1.empty(), "The first vector must not be empty");
-
-        std::unique_lock<std::mutex> lock(mtx_);
-        fassert(status_ == WorkerStatus::Idle, "Channel is not ready for new work");
-        tag_ = tag;
-        c1_ = std::move(c1);
-        c2_ = std::move(c2);
-        status_ = WorkerStatus::Working;
-        cv_.notify_one(); // Notify the worker thread
+        {
+            std::unique_lock<std::mutex> lock(mtx_);
+            fassert(status_ == WorkerStatus::Idle, "Channel is not ready for new work");
+            tag_ = tag;
+            c1_ = std::move(c1);
+            c2_ = std::move(c2);
+            status_ = WorkerStatus::Working;
+        }
+        local_notify(); 
     }
 
     void workDone(std::vector<float> res) {
         // std::cout << "Work done with tag: " << tag_ << ", result size: " << res.size() << std::endl;
 
         fassert(!res.empty(), "Result vector must not be empty");
-
-        std::lock_guard<std::mutex> lock(mtx_);
-        
-        fassert(status_ == WorkerStatus::Working, "Channel is not in working state");
-
-        res_ = std::move(res);
-        status_ = WorkerStatus::Done;
-
-        if (global_cv_) {
-            global_cv_->notify_all(); // Notify the global condition variable
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            fassert(status_ == WorkerStatus::Working, "Channel is not in working state");
+            res_ = std::move(res);
+            status_ = WorkerStatus::Done;
         }
+
+        global_notify(); // Notify the main thread that work is done
     }
 
     // return tag and merged vector
@@ -142,13 +152,17 @@ void set_affinity(std::thread& t, int core_id) {
     }
 }
 
+NO_INLINE void wait_signal(std::condition_variable& cv, std::mutex& mtx) {
+    std::unique_lock<std::mutex> lock(mtx);
+    cv.wait(lock, []() { return true; }); 
+}
 
 int main(int argc, char *argv[]) {
     MemoryStream stream(argc, argv);
     std::condition_variable global_cv;
 
+    int nworkers = std::thread::hardware_concurrency(); // NO HYPERTHREADING (COMPUTE BOUND)
     std::cout << "Starting " << nworkers << " worker threads." << std::endl;
-    int nworkers = std::thread::hardware_concurrency() / 2; // NO HYPERTHREADING (COMPUTE BOUND)
     std::vector<std::thread> workers;
     std::vector<std::unique_ptr<Channel>> channels;
     for (int i = 0; i < nworkers; ++i) {
@@ -201,7 +215,7 @@ int main(int argc, char *argv[]) {
             }
     
             if (ready_count == 0) 
-                global_cv.wait(ulock, []() {return true; });
+                wait_signal(global_cv, lock);
         }
   
 
