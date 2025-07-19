@@ -215,6 +215,12 @@ CpuTopo detect_cpu_topology(bool disable_hyperthreading = false, bool l3cache_gr
             cores.push_back(cpu_set);
         }
 
+        // remove empty cores vector 
+        cores.erase(std::remove_if(cores.begin(), cores.end(),
+            [](const CpuSet& core) { return core.empty(); }), cores.end());
+
+        fassert(!cores.empty(), "No cores found for node " + std::to_string(curr_node));
+
         node.cores = std::move(cores);
         topology.push_back(std::move(node));
         curr_node++;
