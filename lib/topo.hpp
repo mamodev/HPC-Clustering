@@ -80,6 +80,40 @@ std::vector<size_t> flat_thread_pin_map(const CpuTopo& topo) {
     return pin_map;
 }
 
+size_t master_of_node_from_map(const CpuTopo& topo, const std::vector<size_t>& thread_pin_map, size_t node_id) {
+    if (node_id >= topo.size()) {
+        throw std::out_of_range("Node ID out of range");
+    }
+
+    size_t prev_count = 0;
+    for (size_t i = 0; i < node_id; ++i) {
+        for (const auto& core : topo[i].cores) {
+            prev_count += core.size();
+        }
+    }
+
+    return thread_pin_map[prev_count]; 
+}
+
+size_t node_of_thread_from_map(const CpuTopo& topo, const std::vector<size_t>& thread_pin_map, size_t thread_id) {
+    if (thread_id >= thread_pin_map.size()) {
+        throw std::out_of_range("Thread ID out of range");
+    }
+
+    size_t cpu_id = thread_pin_map[thread_id];
+    for (size_t i = 0; i < topo.size(); ++i) {
+        for (const auto& core : topo[i].cores) {
+            if (std::find(core.begin(), core.end(), cpu_id) != core.end()) {
+                return i; // Found the node containing this CPU
+            }
+        }
+    }
+
+    throw std::runtime_error("CPU not found in any node");
+}
+
+
+
 
 size_t getCpuCount(CpuTopo& topo) {
     size_t count = 0;

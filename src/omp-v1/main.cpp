@@ -40,35 +40,53 @@ int main(int argc, char* argv[]) {
 
     std::vector<size_t> thread_pin_map = flat_thread_pin_map(cpu_topo);
 
+    bool done = false;
+
     #pragma omp parallel
     {
         int tid = omp_get_thread_num();
         size_t core = thread_pin_map[tid];
+        size_t node = node_of_thread_from_map(cpu_topo, thread_pin_map, tid);
         set_thread_affinity(core);
+      
+        #pragma omp barrier
 
-        bool stream_finished = false;
         while (true) {
             int task_rank = -1;
             std::vector<float> c1, c2;
 
-            for (int rank = buckets.size() - 1; rank >= 0; --rank) {
-                omp_set_lock(&bucket_mutexes[rank]);
-                if (buckets[rank].size() >= 2) {
-                    c1 = std::move(buckets[rank].back());
-                    buckets[rank].pop_back();
-                    c2 = std::move(buckets[rank].back());
-                    buckets[rank].pop_back();
-                    task_rank = rank;
+            if (cpu_topo.size() == 1 || node == 0) {
+                for (int rank = buckets.size() - 1; rank > 0; --rank) {
+                    omp_set_lock(&bucket_mutexes[rank]);
+                    if (buckets[rank].size() >= 2) {
+                        c1 = std::move(buckets[rank].back());
+                        buckets[rank].pop_back();
+                        c2 = std::move(buckets[rank].back());
+                        buckets[rank].pop_back();
+                        task_rank = rank;
+                    }
+                    
+                    omp_unset_lock(&bucket_mutexes[rank]);
+                    if (task_rank != -1) break;
                 }
-                
-                omp_unset_lock(&bucket_mutexes[rank]);
-                if (task_rank != -1) break;
+            }
+          
+            if (cpu_topo.size() == 1 || node != 0) {
+                if (c1.empty()) {
+                    c1 = std::move(stream.next_batch());
+                    if (c1.empty()) break; 
+                }
+            } else {
+                if (done) {
+                    break; // Exit if no more batches to process
+                }
+
+                if (c1.empty()) {
+                    std::this_thread::yield();
+                    continue; // No new batch, wait for next iteration
+                }
             }
 
-            if (c1.empty() && !stream_finished) {
-                c1 = std::move(stream.next_batch());
-                if (c1.empty()) break; 
-            }
 
             // --- Phase 3: Execute the work (NO LOCKS HELD) ---
             std::vector<float> result_coreset;
@@ -91,8 +109,11 @@ int main(int argc, char* argv[]) {
             omp_set_lock(&bucket_mutexes[result_rank]);                    
             buckets[result_rank].push_back(std::move(result_coreset));
             omp_unset_lock(&bucket_mutexes[result_rank]);
+
         } // End of while loop
     } // End of parallel region (implicit barrier)
+
+    done = true; // Signal all threads to finish
 
     //std::cout << "Final bucket sizes:";
     //for (const auto& rank : buckets) {
