@@ -7,9 +7,11 @@
 #include <thread>
 #include "parser.hpp"
 #include "coreset.hpp"
-
+#include "perf.hpp"
 
 int main(int argc, char* argv[]) {
+    auto perf = PerfManager();
+    perf.pause();
     MemoryStream stream(argc, argv);
     const size_t coreset_size = stream.coreset_size;
     const size_t features     = stream.features;
@@ -18,8 +20,8 @@ int main(int argc, char* argv[]) {
 //        std::max(1u, std::thread::hardware_concurrency()/2u)
 //    );
 
+    perf.resume();
     auto start = std::chrono::high_resolution_clock::now();
-
     std::vector<std::vector<std::vector<float>>> buckets;
     #pragma omp parallel
     {
@@ -78,11 +80,11 @@ int main(int argc, char* argv[]) {
         } // End of while loop
     } // End of parallel region (implicit barrier)
 
-    std::cout << "Final bucket sizes:";
-    for (const auto& rank : buckets) {
-        std::cout << " ," << rank.size();
-    }
-    std::cout << std::endl;
+    //std::cout << "Final bucket sizes:";
+    //for (const auto& rank : buckets) {
+      	//std::cout << " ," << rank.size();
+    //}
+    //std::cout << std::endl;
 
     // reduce all coresets in buckets[1]
     for (int rank = 2; rank < buckets.size(); ++rank) {
@@ -92,11 +94,9 @@ int main(int argc, char* argv[]) {
     }
 
 
-
-
-
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    perf.pause();
     std::cout << "Coreset computed in " << duration << " ms" << std::endl;
     std::cout << "Total processed batches: " << stream.processed_batches << std::endl;
 

@@ -24,18 +24,18 @@ echo 0  | sudo tee /proc/sys/kernel/nmi_watchdog > /dev/null
 echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid > /dev/null
 
 
-# # echo STARTING PERF STAT
-# if [ -f .outs/$1/$2/stat.txt ]; then
-#     mv .outs/$1/$2/stat.txt .outs/$1/$2/stat.txt.old
-# fi
-# perf stat \
-#     --delay=-1 \
-#     --event=task-clock,cycles,instructions,L1-dcache-loads,L1-dcache-load-misses,L1-icache-loads,L1-icache-load-misses,branches,branch-misses \
-#     --control fd:${perf_ctl_fd},${perf_ack_fd} \
-#     --output .outs/$1/$2/stat.txt \
-#     -- ./build/$1-perf .data/$2/data.bin .outs/$1/$2/
+ echo STARTING PERF STAT
+ if [ -f .outs/$1/$2/stat.txt ]; then
+     mv .outs/$1/$2/stat.txt .outs/$1/$2/stat.txt.old
+ fi
 
-#     # -- taskset -c 5 ./build/$1 .data/$2/data.bin .outs/$1/$2 \
+#     --event=task-clock,cycles,instructions,L1-dcache-loads,L1-dcache-load-misses,L1-icache-loads,L1-icache-load-misses,branches,branch-misses \
+ perf stat \
+     --delay=-1 \
+     -e sched:*
+     --control fd:${perf_ctl_fd},${perf_ack_fd} \
+     --output .outs/$1/$2/stat.txt \
+     -- ./build/$1-perf .data/$2/data.bin .outs/$1/$2/
 
 echo "STARTING PERF RECORD"
 perf record \
