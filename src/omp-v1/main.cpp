@@ -139,13 +139,15 @@ int main(int argc, char* argv[]) {
     perf.resume();
     auto start = std::chrono::high_resolution_clock::now();
     
-    size_t total_cpus = getCpuCount(cpu_topo);
+    // size_t total_cpus = getCpuCount(cpu_topo);
+    size_t total_cpus = 128;
     omp_set_num_threads(total_cpus); 
 
 
     // std::vector<size_t> thread_pin_map = flat_thread_pin_map(cpu_topo);
 
-    size_t groups = cpu_topo.size();
+    // size_t groups = cpu_topo.size();
+    size_t groups = 2;
 
     // int tid = omp_get_thread_num();
     // size_t core = thread_pin_map[tid];
@@ -189,20 +191,26 @@ int main(int argc, char* argv[]) {
         #pragma omp parallel num_threads(group_cpus) reduction(max: group_max_work)
         {
 
-        int local_tid = omp_get_thread_num();
-
-        size_t cpu_id = 0;
-        {
-            size_t core = 0;
-            size_t core_offs = 0;
-            CpuSet *cores = &cpu_topo[group_id].cores[core];
-            while (static_cast<size_t>(local_tid) >= cores->size() + core_offs) {
-                core_offs += cores->size();
-                cores = &cpu_topo[group_id].cores[++core];
-            }
-    
-            cpu_id = (*cores)[local_tid - core_offs];
+        int local_tid = omp_get_thread_num();  // 0 > 64
+        size_t cpu_id = local_tid * 2;
+        if (group_id == 1) {
+            cpu_id + 128;
         }
+
+        
+
+        // size_t cpu_id = 0;
+        // {
+        //     size_t core = 0;
+        //     size_t core_offs = 0;
+        //     CpuSet *cores = &cpu_topo[group_id].cores[core];
+        //     while (static_cast<size_t>(local_tid) >= cores->size() + core_offs) {
+        //         core_offs += cores->size();
+        //         cores = &cpu_topo[group_id].cores[++core];
+        //     }
+    
+        //     cpu_id = (*cores)[local_tid - core_offs];
+        // }
 
         set_thread_affinity(cpu_id);
 
