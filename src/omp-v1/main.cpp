@@ -14,9 +14,9 @@ int main(int argc, char* argv[]) {
     const size_t coreset_size = stream.coreset_size;
     const size_t features     = stream.features;
     
-    omp_set_num_threads(
-        std::max(1u, std::thread::hardware_concurrency()/2u)
-    );
+//    omp_set_num_threads(
+//        std::max(1u, std::thread::hardware_concurrency()/2u)
+//    );
 
     auto start = std::chrono::high_resolution_clock::now();
 
