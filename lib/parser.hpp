@@ -256,7 +256,7 @@ public:
             index += batch_size;
         }
         
-        float *data_ptr = samples.data.data() + (index * samples.features);
+        float *data_ptr = samples.data.data() + (start * samples.features);
         return std::vector<float>(data_ptr, data_ptr + batch_size * samples.features);
     }
 };
