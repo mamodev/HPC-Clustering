@@ -212,6 +212,8 @@ public:
 };
 
 
+// include for atomic
+#include <atomic>
 template<bool ThreadSafe = false>
 class MemoryStream : public CoresetStream {
 private:
@@ -230,6 +232,23 @@ public:
         this->coreset_size = coreset_size;
         this->features = samples.features;
         this->processed_batches = 0;
+    }
+
+    // This is not thread-safe, must be called before usage
+    void partition(int npartition, int partition_idx) {
+        size_t total_samples = samples.samples;
+        size_t partition_size = total_samples / npartition;
+        size_t start = partition_idx * partition_size;
+        size_t end = (partition_idx == npartition - 1) ? total_samples : start + partition_size;
+
+        if (start >= total_samples || end > total_samples) {
+            throw std::out_of_range("Partition indices are out of range");
+        }
+
+        samples.data = std::vector<float>(samples.data.begin() + start * samples.features,
+                                          samples.data.begin() + end * samples.features);
+        samples.samples = end - start;
+        index = 0; // Reset index for the new partition
     }
    
     std::vector<float> next_batch() {

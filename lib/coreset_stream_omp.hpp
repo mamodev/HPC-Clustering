@@ -1,19 +1,24 @@
 #pragma once
 
 #include <vector>
+#include <omp.h>
 
-#include "parser.hpp"   
 #include "coreset.hpp"
 #include "assert.hpp"
 
 template<typename int_t = std::size_t, int MinSplitIters=3, unsigned int Seed = 0U>
-std::vector<float> coresetStreamOmp(CoresetStream& stream) {
+std::vector<float> coresetStreamOmp(CoresetStream& stream, int num_threads = -1) {
     const size_t coreset_size = stream.coreset_size;
     const size_t features     = stream.features;
 
+    if (num_threads < 1) {
+        num_threads = omp_get_max_threads();
+    }
+
     std::vector<std::vector<std::vector<float>>> buckets;
-    #pragma omp parallel
+    #pragma omp parallel num_threads(num_threads)
     {
+
         bool stream_finished = false;
         while (true) {
             int task_rank = -1;

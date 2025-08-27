@@ -5,6 +5,7 @@ import pandas as pd
 import os
 
 def run_benchmark(num_threads, data_file, output_dir):
+    print(f"Running with {num_threads}")
     command = [
         f"OMP_NUM_THREADS={num_threads}",
         "./build/omp-v1",
@@ -24,7 +25,7 @@ def run_benchmark(num_threads, data_file, output_dir):
 
 
 def main():
-    data_file = ".data/blobs104/data.bin"
+    data_file = ".data/blobs007/data.bin"
     output_dir = ".tmp"
     benchmark_file = "benchmark_results.csv"
 

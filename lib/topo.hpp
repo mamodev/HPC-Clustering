@@ -47,8 +47,36 @@ struct CpuNode {
 
 using CpuTopo = std::vector<CpuNode>;
 
+unsigned int getNodeCpu(CpuNode& n, size_t i) {
+    int group = 0;
+    while (group < n.cores.size() && i >= n.cores[group].size()) {
+        i -= n.cores[group].size();
+        group++;
+    }
+    fassert(group < n.cores.size(), "Invalid core index: " + std::to_string(i) + " for node with " + std::to_string(n.cores.size())
+        + " cores and group " + std::to_string(group));
+    return n.cores[group][i];
+}   
+
+
 size_t getNodeCount(const CpuTopo& topo) {
     return topo.size();
+}
+
+size_t getNodeCoreCount(const CpuNode& node) {
+    size_t count = 0;
+    for (const auto& core : node.cores) {
+        count += core.size();
+    }
+    return count;
+}
+
+CpuSet getAllNodeCores(const CpuNode& node) {
+    CpuSet all_cores;
+    for (const auto& core : node.cores) {
+        all_cores.insert(all_cores.end(), core.begin(), core.end());
+    }
+    return all_cores;
 }
 
 size_t getNodeGroupsCount(size_t node_id, const CpuTopo& topo) {

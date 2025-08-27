@@ -8,6 +8,19 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 find_package(MPI REQUIRED)
 find_package(OpenMP REQUIRED)
+# numa is mandatory
+find_library(numa NAMES numa)
+if(numa)
+    message(STATUS "Found numa library: ${numa}")
+    get_filename_component(NUMA_DIR ${numa} DIRECTORY)
+    get_filename_component(NUMA_DIR ${NUMA_DIR} DIRECTORY)
+    message(STATUS "numa directory: ${NUMA_DIR}")
+    include_directories(${NUMA_DIR}/include)
+    link_directories(${NUMA_DIR}/lib)
+else()
+    message(FATAL_ERROR "numa library not found. Please install it.")
+endif()
+
 
 find_library(mpiP NAMES mpiP)
 if(mpiP)
@@ -42,7 +55,7 @@ endif()
 
 set(LIB_DIR ${CMAKE_SOURCE_DIR}/lib)
 file(GLOB MAIN_SOURCES RELATIVE ${CMAKE_SOURCE_DIR} src/*/main.cpp)
-set(COMMON_BASE_LIBS MPI::MPI_CXX OpenMP::OpenMP_CXX)
+set(COMMON_BASE_LIBS MPI::MPI_CXX OpenMP::OpenMP_CXX numa)
 if (LINK_STDCXXEXP_FLAG)
     list(APPEND COMMON_BASE_LIBS stdc++exp)
 endif()
